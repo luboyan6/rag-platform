@@ -89,7 +89,8 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 
 	passagesPreview := langfuse.SummarizePassagePreviews(candidatesToRerank, passages, 25)
 	rerankCtx, rerankSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "rerank",
+		Name:            "rerank",
+		ObservationType: "chain",
 		Input: map[string]interface{}{
 			"query":            chatManage.RewriteQuery,
 			"candidate_count":  len(candidatesToRerank),

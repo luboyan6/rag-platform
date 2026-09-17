@@ -550,10 +550,19 @@ start_frontend() {
         return 1
     fi
     
-    # 检查依赖是否已安装
-    if [ ! -d "node_modules" ]; then
-        log_warning "node_modules 不存在，正在安装依赖..."
-        npm install
+    # 检查依赖是否已安装且与 package.json 一致。
+    # 仅检查 node_modules 目录不够：拉取新增依赖后目录通常仍然存在，
+    # 但 Vite 会在懒加载对应页面时才暴露缺失依赖的错误。
+    if [ ! -d "node_modules" ] || ! npm ls --depth=0 >/dev/null 2>&1; then
+        if [ ! -d "node_modules" ]; then
+            log_warning "node_modules 不存在，正在安装依赖..."
+        else
+            log_warning "node_modules 与 package.json 不一致，正在同步依赖..."
+        fi
+        if ! npm install; then
+            log_error "前端依赖安装失败"
+            return 1
+        fi
     fi
     
     log_info "启动 Vite 开发服务器..."

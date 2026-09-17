@@ -12,7 +12,9 @@ import (
 // all embedding clients. Embedders are recreated as model configuration changes,
 // but their outbound connections can be safely reused across client instances,
 // so the transport (and its keep-alive pool) is built once at package load.
-var sharedEmbeddingHTTPTransport = secutils.NewSSRFSafeTransport(
+// Remote model endpoints honor HTTP(S)_PROXY; NO_PROXY keeps internal models
+// direct without changing the default transport used by storage and databases.
+var sharedEmbeddingHTTPTransport = secutils.NewSSRFSafeTransportWithEnvironmentProxy(
 	secutils.DefaultSSRFSafeHTTPClientConfig(),
 )
 

@@ -3,7 +3,9 @@ package langfuse
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/hibiken/asynq"
@@ -33,17 +35,27 @@ func InjectTracing(ctx context.Context, carrier types.LangfuseTracingCarrier) {
 	if !mgr.Enabled() {
 		return
 	}
+	// A detached/background context may retain the Langfuse Trace handle while
+	// no longer carrying a recording OTel span. Reattach the root span before
+	// injecting so enqueueing after the HTTP handler's first context rebuild
+	// does not silently create an orphan worker trace.
+	ctx = mgr.reestablishParentSpan(ctx)
 	tc := types.TracingContext{}
 	c := propagation.MapCarrier{}
 	propagator.Inject(ctx, c)
 	tc.LangfuseTraceparent = c["traceparent"]
 	// Backward-compat: keep LangfuseTraceID = the W3C trace id for any legacy
 	// reader. LangfuseParentObservationID is no longer used by the OTLP path.
-	if trace, ok := TraceFromContext(ctx); ok && trace != nil {
-		tc.LangfuseTraceID = trace.ID
+	if activeTrace, ok := TraceFromContext(ctx); ok && activeTrace != nil {
+		tc.LangfuseTraceID = activeTrace.ID
+		tc.LangfuseTraceName = activeTrace.name
+		tc.LangfuseTags = tagsCopy(activeTrace.tags)
+		tc.LangfuseUserID = firstNonEmptyString(activeTrace.userID, userIDFromCtx(ctx))
+		tc.LangfuseSessionID = firstNonEmptyString(activeTrace.sessionID, sessionIDFromCtx(ctx))
+	} else {
+		tc.LangfuseUserID = userIDFromCtx(ctx)
+		tc.LangfuseSessionID = sessionIDFromCtx(ctx)
 	}
-	tc.LangfuseUserID = userIDFromCtx(ctx)
-	tc.LangfuseSessionID = sessionIDFromCtx(ctx)
 	carrier.SetLangfuseTracing(tc)
 }
 
@@ -68,10 +80,10 @@ func peekTracingContext(payload []byte) types.TracingContext {
 //  1. Extracts the W3C traceparent stamped onto the task payload by
 //     InjectTracing and resumes the originating trace (so the Langfuse UI
 //     stitches the HTTP request and the async processing into one tree). For
-//     scheduled jobs with no upstream trace it opens a standalone trace named
-//     after the task type.
+//     scheduled jobs with no upstream trace it opens a stable `asynq.run` trace;
+//     the task type stays in metadata/tags for grouping.
 //
-//  2. Opens a SPAN around the handler execution so every child generation
+//  2. Opens a Chain observation around the handler execution so every child generation
 //     (embedding / VLM / chat / rerank / ASR) auto-attaches to it.
 //
 //  3. Enriches the span with asynq's own metadata: task id, queue, retry
@@ -104,17 +116,28 @@ func AsynqMiddleware() asynq.MiddlewareFunc {
 
 			// If the upstream enqueuer stamped a traceparent, resume that trace
 			// (worker spans become children of the HTTP trace). Otherwise start
-			// a standalone trace named after the task type.
+			// a standalone trace for the task.
 			var trace *Trace
 			shouldFinishTrace := false
 			if tc.LangfuseTraceparent != "" {
 				ctx = propagator.Extract(ctx, propagation.MapCarrier{"traceparent": tc.LangfuseTraceparent})
 				if sc := oteltrace.SpanContextFromContext(ctx); sc.IsValid() {
-					ctx = withTrace(ctx, &Trace{ID: sc.TraceID().String(), manager: mgr})
+					trace = &Trace{
+						ID:        sc.TraceID().String(),
+						manager:   mgr,
+						name:      tc.LangfuseTraceName,
+						userID:    tc.LangfuseUserID,
+						sessionID: tc.LangfuseSessionID,
+						tags:      normalizeTags(tc.LangfuseTags),
+					}
+					ctx = withTrace(ctx, trace)
+					ctx = withTraceBaggage(ctx, mgr, trace)
 				}
-			} else {
+			}
+			if trace == nil {
 				ctx, trace = mgr.StartTrace(ctx, TraceOptions{
-					Name:      "asynq." + task.Type(),
+					Name:      "asynq.run",
+					Input:     spanInputFromPayload(task.Payload()),
 					UserID:    firstNonEmptyString(tc.LangfuseUserID, userIDFromCtx(ctx)),
 					SessionID: firstNonEmptyString(tc.LangfuseSessionID, sessionIDFromCtx(ctx)),
 					Metadata:  meta,
@@ -124,9 +147,10 @@ func AsynqMiddleware() asynq.MiddlewareFunc {
 			}
 
 			ctx, span := mgr.StartSpan(ctx, SpanOptions{
-				Name:     "asynq." + task.Type(),
-				Input:    spanInputFromPayload(task.Payload()),
-				Metadata: meta,
+				Name:            "asynq.task",
+				ObservationType: "chain",
+				Input:           spanInputFromPayload(task.Payload()),
+				Metadata:        meta,
 			})
 
 			err := next.ProcessTask(ctx, task)
@@ -159,18 +183,72 @@ func AsynqMiddleware() asynq.MiddlewareFunc {
 // task payload for the Langfuse "Input" pane. We deliberately do NOT send
 // the full JSON blob because manual/text-ingest payloads can be many
 // kilobytes and FAQ import payloads embed the full entry list. Instead we
-// preview the first ~1KB verbatim.
+// preview a bounded, redacted JSON summary. Observability payloads can include
+// uploaded document content, API tokens, or other business fields; raw task
+// bytes must never be copied into an external tracing backend.
 func spanInputFromPayload(payload []byte) interface{} {
-	const preview = 1024
+	const maxPayloadInspectBytes = 64 * 1024
 	if len(payload) == 0 {
 		return nil
 	}
-	if len(payload) <= preview {
-		return string(payload)
+	if len(payload) > maxPayloadInspectBytes {
+		return map[string]interface{}{
+			"format": "json_omitted",
+			"bytes":  len(payload),
+		}
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return map[string]interface{}{
+			"format": "non_json",
+			"bytes":  len(payload),
+		}
 	}
 	return map[string]interface{}{
-		"preview": string(payload[:preview]) + "...",
+		"payload": sanitizePayloadValue(decoded, 0),
 		"bytes":   len(payload),
+	}
+}
+
+func sanitizePayloadValue(value interface{}, depth int) interface{} {
+	if depth >= 4 {
+		return "[TRUNCATED]"
+	}
+	switch value := value.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, minInt(len(value), 40))
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for i, key := range keys {
+			if i >= 40 {
+				break
+			}
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "lf_") {
+				continue
+			}
+			if sensitiveField(key) {
+				out[key] = "[REDACTED]"
+				continue
+			}
+			out[key] = sanitizePayloadValue(value[key], depth+1)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, 0, minInt(len(value), 16))
+		for i, item := range value {
+			if i >= 16 {
+				break
+			}
+			out = append(out, sanitizePayloadValue(item, depth+1))
+		}
+		return out
+	case string:
+		return truncateTraceString(value, 256)
+	default:
+		return value
 	}
 }
 
@@ -191,6 +269,9 @@ func userIDFromCtx(ctx context.Context) string {
 // is already set by GinMiddleware; for async work we fall back to the
 // request id so retries of the same logical task group together.
 func sessionIDFromCtx(ctx context.Context) string {
+	if v, ok := types.SessionIDFromContext(ctx); ok && v != "" {
+		return v
+	}
 	if v, ok := types.RequestIDFromContext(ctx); ok && v != "" {
 		return v
 	}

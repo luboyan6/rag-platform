@@ -55,6 +55,11 @@ func TraceparentFromContext(ctx context.Context) string {
 	if ctx == nil || !mgr.Enabled() {
 		return ""
 	}
+	// CloneContext preserves the *Trace handle even when the OTel span has
+	// already ended or was dropped during a context rebuild. Reattach that
+	// handle's span before injecting so late async work still correlates to
+	// the originating trace.
+	ctx = mgr.reestablishParentSpan(ctx)
 	c := propagation.MapCarrier{}
 	propagator.Inject(ctx, c)
 	return c["traceparent"]
@@ -79,7 +84,14 @@ func AttachTraceparent(ctx context.Context, traceparent string) context.Context 
 	}
 	ctx = propagator.Extract(ctx, propagation.MapCarrier{"traceparent": traceparent})
 	if sc := oteltrace.SpanContextFromContext(ctx); sc.IsValid() {
-		ctx = withTrace(ctx, &Trace{ID: sc.TraceID().String(), manager: mgr})
+		t := &Trace{
+			ID:        sc.TraceID().String(),
+			manager:   mgr,
+			userID:    userIDFromCtx(ctx),
+			sessionID: sessionIDFromCtx(ctx),
+		}
+		ctx = withTrace(ctx, t)
+		ctx = withTraceBaggage(ctx, mgr, t)
 	}
 	return ctx
 }

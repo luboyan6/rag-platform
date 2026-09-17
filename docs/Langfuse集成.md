@@ -5,9 +5,9 @@ WeKnora 内置了对 [Langfuse](https://langfuse.com) 的轻量级集成，用�
 ## 1. 特性
 
 - 自动上报 **chat / embedding / rerank / VLM（视觉语言模型）/ ASR（语音识别）** 全部 5 类模型调用的 prompt、响应和 token 使用量。
-- 为每个对话、检索、**文件上传及后续异步处理**创建一条端到端 **trace**。HTTP 请求是根，asynq 任务以 SPAN 的形式挂在同一条 trace 下，文档解析 → chunk embedding → 多模态 OCR/Caption → 摘要 / 问题生成全部在同一棵树里可见。
+- 为每个对话、检索、**文件上传及后续异步处理**创建一条端到端 **trace**。HTTP 请求是根，asynq 任务以 Chain observation 的形式挂在同一条 trace 下，文档解析 → chunk embedding → 多模态 OCR/Caption → 摘要 / 问题生成全部在同一棵树里可见。
 - 支持 **流式响应**：记录首 token 延迟（Time-To-First-Token），完整响应在流结束后一次性写入。
-- **跨进程 trace 透传**：HTTP 层把 `trace_id` / `parent_observation_id` 注入 asynq payload，worker 在 asynq middleware 层自动 resume；定时任务（例如数据源同步）则退化为独立 trace，依然按任务类型（`asynq.<type>`）聚合。
+- **跨进程 trace 透传**：HTTP 层把 W3C `traceparent` 以及低基数的 user/session/trace-name/tags 注入 asynq payload，worker 在 asynq middleware 层自动 resume；定时任务（例如数据源同步）则退化为独立 `asynq.run` trace，并用 `task_type` metadata 聚合。
 - **完全可选**：不配置 `LANGFUSE_*` 环境变量时，Langfuse 相关代码路径是 no-op，不产生任何性能开销。
 - **异步批量上报**：不阻塞业务请求；队列满时静默丢弃，观测数据不会影响用户对话。
 - **开箱即用的部署方式**：Docker Compose（`docker-compose.yml` 已内置环境变量）、Helm Chart（通过 `extraEnv`）、Lite 版本（本地单机）均支持。
@@ -227,9 +227,9 @@ Dev 相关容器都带 `-dev` 后缀、用独立网络 `WeKnora-network-dev`，�
 
 | Langfuse 概念 | WeKnora 对应 | 备注 |
 | --- | --- | --- |
-| Trace | 一次 HTTP 请求（含其触发的所有 asynq 任务） | 对于 `knowledge-chat`、`agent-chat`、`knowledge-search`、`generate_title`、`evaluation`、模型连通性测试等在线请求；以及文件上传/URL 入库/manual/reparse/move/copy、FAQ 导入、知识修改、wiki auto-fix、数据源手工触发等入库请求，HTTP 层都会开启 trace，并把 `trace_id` / `parent_observation_id` 注入 asynq payload。 |
-| Span（type=SPAN） | 每个 asynq 任务的执行窗口 / 每次 Agent 执行及其每一轮 / 每次工具调用 | 由 `internal/tracing/langfuse/AsynqMiddleware` 在 `mux.Use` 注册；对每个 handler 自动创建 `asynq.<task_type>` 的 SPAN，并记录 `task_id` / `queue` / `retry` / `payload_bytes`。定时任务（无上游 trace）会退化为 `asynq.<task_type>` 独立 trace。**Agent 相关**：`AgentEngine.Execute` 会开 `agent.execute` 顶层 SPAN，其下每一轮 ReAct 循环开 `agent.round.N` SPAN，每次工具调用开 `agent.tool.<tool_name>` SPAN（参数、输出、耗时、成败、错误都会写入）。 |
-| Generation（type=GENERATION） | 每次 chat / embedding / rerank / VLM / ASR 调用 | 若位于 span 下会自动设置 `parentObservationId`，所以 Langfuse UI 呈现 trace → asynq-span → generation 的树状结构；Agent 模式下是 trace → agent.execute → agent.round.N → (chat.completion.stream + agent.tool.X → rerank/embedding...) 的完整树。 |
+| Trace | 一次 HTTP 请求（含其触发的所有 asynq 任务） | 对于 `knowledge-chat`、`agent-chat`、`knowledge-search`、`generate_title`、`evaluation`、模型连通性测试等在线请求；以及文件上传/URL 入库/manual/reparse/move/copy、FAQ 导入、知识修改、wiki auto-fix、数据源手工触发等入库请求，HTTP 层都会开启 trace，并把 W3C `traceparent` 及低基数上下文注入 asynq payload。 |
+| Span / Chain / Agent / Tool / Retriever | 每个 asynq 任务的执行窗口、Agent 执行/轮次/工具调用、检索与流水线阶段 | 由 `AsynqMiddleware` 自动创建 `asynq.task`（`chain`），定时任务根为 `asynq.run`；所有 observation 都使用 Langfuse v4 有效类型。Agent 树为 trace → `agent.execute`（`agent`）→ `agent.round`（`chain`）→ chat generation 与稳定命名的 `agent.tool`（`tool`），具体工具名写入 metadata。 |
+| Generation / Embedding（type=`generation` / `embedding`） | 每次 chat / embedding / rerank / VLM / ASR 调用 | 每次模型调用一个 observation，记录模型名、参数、输出和 token usage；embedding 使用更具体的 `embedding` 类型。 |
 | Input Tokens | `TokenUsage.PromptTokens` | 来自模型返回的 usage 字段。 |
 | Output Tokens | `TokenUsage.CompletionTokens` | 来自模型返回的 usage 字段。 |
 | Total Tokens | `TokenUsage.TotalTokens` | 大多数厂商返回；未返回时自动求和。 |
@@ -243,7 +243,7 @@ Dev 相关容器都带 `-dev` 后缀、用独立网络 `WeKnora-network-dev`，�
 
 ### 覆盖到的 asynq 任务类型
 
-下表列出当前会在 Langfuse 里自动出现对应 SPAN 的 asynq 任务；每种任务的 payload 均已嵌入 `types.TracingContext`，enqueue 时由 `langfuse.InjectTracing(ctx, &payload)` 从当前 HTTP trace 拷出 `trace_id` / `parent_observation_id`。
+下表列出当前会在 Langfuse 里自动出现对应 observation 的 asynq 任务；每种任务的 payload 均已嵌入 `types.TracingContext`，enqueue 时由 `langfuse.InjectTracing(ctx, &payload)` 从当前 HTTP trace 拷出 W3C `traceparent` 与低基数上下文。
 
 | 任务类型常量 | Handler | 典型触发来源 |
 | --- | --- | --- |
@@ -296,16 +296,16 @@ Dev 相关容器都带 `-dev` 后缀、用独立网络 `WeKnora-network-dev`，�
 
 - `internal/tracing/langfuse/` — Langfuse 客户端、异步批量上报、Gin 中间件、**asynq middleware**、Span / Trace resume 实现。
   - `tracer.go` — 暴露 `Trace` / `Span` / `Generation` + `StartTrace` / `StartSpan` / `StartGeneration` / `ResumeTrace`。
-  - `asynq.go` — `AsynqMiddleware()` 统一在 mux 上包 handler；`InjectTracing(ctx, payload)` 在 enqueue 侧把 trace/span ID 注入 payload。
+  - `asynq.go` — `AsynqMiddleware()` 统一在 mux 上包 handler；`InjectTracing(ctx, payload)` 在 enqueue 侧把 W3C `traceparent` 与低基数上下文注入 payload。
   - `middleware.go` — Gin 中间件 + `shouldTrace` 白名单（覆盖 chat / 入库 / FAQ / wiki / 数据源等路径）。
-- `internal/types/tracing.go` — `TracingContext` POCO，所有 asynq payload 通过嵌入此结构携带 `lf_trace_id` / `lf_parent_obs_id` / `lf_user_id` / `lf_session_id`。
+- `internal/types/tracing.go` — `TracingContext` POCO，所有 asynq payload 通过嵌入此结构携带 W3C `traceparent` 与低基数的 `lf_user_id` / `lf_session_id` / `lf_trace_name` / `lf_tags`。
 - `internal/models/chat/langfuse_wrapper.go` — Chat 调用装饰器（含流式）。
 - `internal/models/embedding/langfuse_wrapper.go` — Embedding 调用装饰器。
 - `internal/models/rerank/langfuse_wrapper.go` — Rerank 调用装饰器。
 - `internal/models/vlm/langfuse_wrapper.go` — VLM（视觉语言模型）调用装饰器。
 - `internal/models/asr/langfuse_wrapper.go` — ASR（语音识别）调用装饰器。
-- `internal/agent/engine.go` — `agent.execute` 顶层 SPAN 和 `agent.round.<N>` 每轮 SPAN。
-- `internal/agent/act.go` — `agent.tool.<tool_name>` 工具调用 SPAN（包含参数、输出、耗时、成败）。
+- `internal/agent/engine.go` — `agent.execute` 顶层 Agent observation 和稳定命名的 `agent.round` Chain observation。
+- `internal/agent/act.go` — 稳定命名的 `agent.tool` Tool observation（具体工具名在 metadata，包含脱敏参数、输出、耗时、成败）。
 - `internal/router/router.go` — 注册 `langfuse.GinMiddleware()`。
 - `internal/router/task.go` — 在 asynq mux 上 `mux.Use(langfuse.AsynqMiddleware())`，使所有 handler 自动被 trace。
 - `internal/container/container.go` — 初始化 + 资源清理。

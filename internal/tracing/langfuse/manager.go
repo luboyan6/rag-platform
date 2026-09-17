@@ -84,6 +84,10 @@ func Init(cfg Config) (*Manager, error) {
 		}
 		m.tp = sdktrace.NewTracerProvider(
 			sdktrace.WithResource(res),
+			// Langfuse v4 indexes trace-wide fields from each observation. This
+			// processor copies the in-process baggage set by StartTrace onto
+			// every child before the exporter sees it.
+			sdktrace.WithSpanProcessor(newLangfuseBaggageSpanProcessor(cfg.Environment, cfg.Release)),
 			sdktrace.WithSpanProcessor(sp),
 			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRate))),
 		)

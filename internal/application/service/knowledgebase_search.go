@@ -231,7 +231,8 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	// only) and a langfuse span around the entire retrieve step.
 	logger.Infof(ctx, "Starting multi-store retrieval, group count: %d", len(groups))
 	retrieveCtx, retrieveSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "retrieve",
+		Name:            "retrieve",
+		ObservationType: "retriever",
 		Input: map[string]interface{}{
 			"query_text":             params.QueryText,
 			"kb_ids":                 searchKBIDs,

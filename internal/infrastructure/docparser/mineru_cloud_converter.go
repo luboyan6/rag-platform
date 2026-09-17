@@ -136,7 +136,7 @@ func (c *MinerUCloudReader) applyUploadURLs(ctx context.Context, fileName, ext s
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := utils.NewSSRFSafeHTTPClient(utils.SSRFSafeHTTPClientConfig{Timeout: 30 * time.Second, MaxRedirects: 5})
+	client := utils.NewSSRFSafeHTTPClientWithEnvironmentProxy(utils.SSRFSafeHTTPClientConfig{Timeout: 30 * time.Second, MaxRedirects: 5})
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", "", fmt.Errorf("HTTP request: %w", err)
@@ -169,7 +169,7 @@ func (c *MinerUCloudReader) uploadFile(ctx context.Context, uploadURL string, co
 		return fmt.Errorf("create PUT request: %w", err)
 	}
 
-	client := utils.NewSSRFSafeHTTPClient(utils.SSRFSafeHTTPClientConfig{Timeout: 120 * time.Second, MaxRedirects: 5})
+	client := utils.NewSSRFSafeHTTPClientWithEnvironmentProxy(utils.SSRFSafeHTTPClientConfig{Timeout: 120 * time.Second, MaxRedirects: 5})
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("PUT upload: %w", err)
@@ -271,7 +271,7 @@ func (c *MinerUCloudReader) fetchBatchStatus(ctx context.Context, batchID string
 		httpReq.Header.Set(k, v)
 	}
 
-	client := utils.NewSSRFSafeHTTPClient(utils.SSRFSafeHTTPClientConfig{Timeout: 30 * time.Second, MaxRedirects: 5})
+	client := utils.NewSSRFSafeHTTPClientWithEnvironmentProxy(utils.SSRFSafeHTTPClientConfig{Timeout: 30 * time.Second, MaxRedirects: 5})
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -356,7 +356,7 @@ func downloadAndExtractZip(zipURL string) (string, []types.ImageRef, error) {
 	if err := utils.ValidateURLForSSRF(zipURL); err != nil {
 		return "", nil, fmt.Errorf("zip URL blocked by SSRF check: %v", err)
 	}
-	client := utils.NewSSRFSafeHTTPClient(utils.SSRFSafeHTTPClientConfig{Timeout: 120 * time.Second, MaxRedirects: 5})
+	client := utils.NewSSRFSafeHTTPClientWithEnvironmentProxy(utils.SSRFSafeHTTPClientConfig{Timeout: 120 * time.Second, MaxRedirects: 5})
 	resp, err := client.Get(zipURL)
 	if err != nil {
 		return "", nil, fmt.Errorf("download zip: %w", err)
@@ -500,7 +500,7 @@ func PingMinerUCloud(apiKey string) (bool, string) {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := utils.NewSSRFSafeHTTPClient(utils.SSRFSafeHTTPClientConfig{
+	client := utils.NewSSRFSafeHTTPClientWithEnvironmentProxy(utils.SSRFSafeHTTPClientConfig{
 		Timeout:      10 * time.Second,
 		MaxRedirects: 5,
 	})

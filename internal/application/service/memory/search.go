@@ -58,7 +58,8 @@ func (s *Service) SearchMemory(
 	query = strings.TrimSpace(query)
 
 	searchCtx, searchSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "memory.search",
+		Name:            "memory.search",
+		ObservationType: "retriever",
 		Input: map[string]interface{}{
 			"query": langfuse.TruncateRunes(query, recallQueryPreviewRunes),
 			"limit": limit,

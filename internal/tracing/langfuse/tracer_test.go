@@ -145,6 +145,15 @@ func spanAttr(attrs []attribute.KeyValue, key string) string {
 // spanType returns the langfuse.observation.type of a span.
 func spanType(s tracetest.SpanStub) string { return spanAttr(s.Attributes, attrObsType) }
 
+func spanStringSliceAttr(attrs []attribute.KeyValue, key string) []string {
+	for _, kv := range attrs {
+		if string(kv.Key) == key && kv.Value.Type() == attribute.STRINGSLICE {
+			return kv.Value.AsStringSlice()
+		}
+	}
+	return nil
+}
+
 // TestSpan_NestedHierarchy verifies nested StartSpan calls produce a
 // trace → span → span → generation tree with correct OTel parent linking
 // (parenting is automatic through trace.SpanFromContext, no manual ids).
@@ -189,9 +198,10 @@ func TestSpan_NestedHierarchy(t *testing.T) {
 	if genS.Parent.SpanID() != innerS.SpanContext.SpanID() {
 		t.Errorf("gen parent = %s, want inner %s", genS.Parent.SpanID(), innerS.SpanContext.SpanID())
 	}
-	// Observation types.
-	if spanType(root) != obsTypeTrace {
-		t.Errorf("root type = %q, want %q", spanType(root), obsTypeTrace)
+	// Observation types. A Langfuse trace is represented by a valid root
+	// observation (span); "trace" is not a v4 observation type.
+	if spanType(root) != obsTypeSpan {
+		t.Errorf("root type = %q, want %q", spanType(root), obsTypeSpan)
 	}
 	if spanType(outerS) != obsTypeSpan || spanType(innerS) != obsTypeSpan {
 		t.Errorf("outer/inner type not span: %q %q", spanType(outerS), spanType(innerS))
@@ -284,6 +294,9 @@ func TestSpan_FinishMetadataMerged(t *testing.T) {
 				t.Errorf("span metadata %q missing %q", meta, want)
 			}
 		}
+		if got := spanAttr(s.Attributes, attrObsMetadata+".outcome"); got != "success" {
+			t.Errorf("flat span outcome metadata = %q, want success", got)
+		}
 		return
 	}
 	t.Fatal("work span not exported")
@@ -308,6 +321,13 @@ func TestTrace_FinishMetadataMerged(t *testing.T) {
 		if !strings.Contains(meta, `"request_id":"req-1"`) || !strings.Contains(meta, `"status":200`) {
 			t.Errorf("trace metadata %q missing merged fields", meta)
 		}
+		observationMeta := spanAttr(s.Attributes, attrObsMetadata)
+		if !strings.Contains(observationMeta, `"request_id":"req-1"`) || !strings.Contains(observationMeta, `"status":200`) {
+			t.Errorf("root observation metadata %q missing merged fields", observationMeta)
+		}
+		if got := spanAttr(s.Attributes, attrTraceMetadata+".status"); got != "200" {
+			t.Errorf("flat trace status metadata = %q, want 200", got)
+		}
 		return
 	}
 	t.Fatal("root span not exported")
@@ -325,10 +345,10 @@ func TestStartGeneration_AutoRootExported(t *testing.T) {
 
 	var root, generation tracetest.SpanStub
 	for _, s := range exp.GetSpans() {
-		switch spanType(s) {
-		case obsTypeTrace:
+		switch {
+		case !s.Parent.IsValid():
 			root = s
-		case obsTypeGeneration:
+		case spanType(s) == obsTypeGeneration:
 			generation = s
 		}
 	}
@@ -355,10 +375,10 @@ func TestStartSpan_AutoRootExported(t *testing.T) {
 
 	var sawRoot, sawSpan bool
 	for _, s := range exp.GetSpans() {
-		switch spanType(s) {
-		case obsTypeTrace:
+		if !s.Parent.IsValid() {
 			sawRoot = true
-		case obsTypeSpan:
+		}
+		if s.Parent.IsValid() && spanType(s) == obsTypeSpan {
 			sawSpan = true
 		}
 	}
@@ -435,7 +455,7 @@ func TestAttachTraceparent_FollowUpJoinsOriginatingTrace(t *testing.T) {
 			followSpan = s
 		case s.Name == "chat.completion" && spanType(s) == obsTypeGeneration:
 			generation = s
-		case s.Name == "chat.completion" && spanType(s) == obsTypeTrace:
+		case s.Name == "chat.completion" && spanType(s) == obsTypeSpan && !s.Parent.IsValid():
 			autoRoot = true
 		}
 	}
@@ -482,4 +502,116 @@ func TestAttachTraceparent_LeavesExistingTrace(t *testing.T) {
 		return
 	}
 	t.Fatal("generation span not exported")
+}
+
+func TestTraceparentFromContext_ReestablishesDetachedTrace(t *testing.T) {
+	m, _ := newTestManager(t)
+
+	ctx, root := m.StartTrace(context.Background(), TraceOptions{Name: "root"})
+	root.Finish(nil, nil)
+	detached := context.WithValue(context.Background(), traceCtxKey, root)
+
+	got := TraceparentFromContext(detached)
+	if got == "" || !strings.HasPrefix(got, "00-"+root.ID) {
+		t.Fatalf("traceparent from detached trace = %q, want trace id %s", got, root.ID)
+	}
+
+	// Keep ctx referenced so the test also verifies the returned start context
+	// itself was the source of the trace handle before it was detached.
+	if TraceparentFromContext(ctx) == "" {
+		t.Fatal("traceparent missing from the original trace context")
+	}
+}
+
+// TestV4TraceContextAndObservationTypes guards the attributes that make a
+// direct OTLP trace useful in Langfuse v4: root observation I/O, valid
+// semantic types, and trace-wide fields copied to child observations.
+func TestV4TraceContextAndObservationTypes(t *testing.T) {
+	m, exp := newTestManager(t)
+
+	ctx, root := m.StartTrace(context.Background(), TraceOptions{
+		Name:      "chat.turn",
+		UserID:    "user-1",
+		SessionID: "session-1",
+		Input:     map[string]interface{}{"query": "hello"},
+		Metadata: map[string]interface{}{
+			"request_id": "request-1",
+			"api_key":    "must-not-appear",
+			"nested":     map[string]string{"authToken": "nested-secret"},
+		},
+		Tags: []string{"chat", "production"},
+	})
+	ctx, retriever := m.StartSpan(ctx, SpanOptions{
+		Name:            "retrieve",
+		ObservationType: obsTypeRetriever,
+		Input:           map[string]interface{}{"query": "hello", "api_key": "input-secret"},
+		Metadata:        map[string]interface{}{"retriever": "vector"},
+	})
+	_, embedding := m.StartGeneration(ctx, GenerationOptions{
+		Name:            "embedding.embed",
+		Model:           "embed-test",
+		ObservationType: obsTypeEmbedding,
+	})
+	embedding.Finish(map[string]interface{}{"dimensions": 3}, nil, nil)
+	retriever.Finish(map[string]interface{}{"hits": 1}, map[string]interface{}{"authToken": "finish-secret"}, nil)
+	root.SetOutput(map[string]interface{}{"answer": "world"})
+	root.Finish(map[string]interface{}{"status": 200}, map[string]interface{}{"outcome": "success"})
+
+	var rootStub, retrieverStub, embeddingStub tracetest.SpanStub
+	for _, span := range exp.GetSpans() {
+		switch span.Name {
+		case "chat.turn":
+			rootStub = span
+		case "retrieve":
+			retrieverStub = span
+		case "embedding.embed":
+			embeddingStub = span
+		}
+	}
+	if !rootStub.SpanContext.IsValid() || !retrieverStub.SpanContext.IsValid() || !embeddingStub.SpanContext.IsValid() {
+		t.Fatalf("expected root and child observations, got %d spans", len(exp.GetSpans()))
+	}
+	if spanType(rootStub) != obsTypeSpan {
+		t.Fatalf("root type = %q, want %q", spanType(rootStub), obsTypeSpan)
+	}
+	if spanType(retrieverStub) != obsTypeRetriever {
+		t.Fatalf("retriever type = %q, want %q", spanType(retrieverStub), obsTypeRetriever)
+	}
+	if spanType(embeddingStub) != obsTypeEmbedding {
+		t.Fatalf("embedding type = %q, want %q", spanType(embeddingStub), obsTypeEmbedding)
+	}
+	if input := spanAttr(rootStub.Attributes, attrObsInput); !strings.Contains(input, `"query":"hello"`) {
+		t.Fatalf("root observation input = %q, want user query", input)
+	}
+	retrieverInput := spanAttr(retrieverStub.Attributes, attrObsInput)
+	if strings.Contains(retrieverInput, "input-secret") {
+		t.Fatalf("sensitive observation input leaked into trace: %q", retrieverInput)
+	}
+	retrieverMetadata := spanAttr(retrieverStub.Attributes, attrObsMetadata)
+	if strings.Contains(retrieverMetadata, "finish-secret") {
+		t.Fatalf("sensitive finish metadata leaked into trace: %q", retrieverMetadata)
+	}
+	output := spanAttr(rootStub.Attributes, attrObsOutput)
+	if !strings.Contains(output, `"answer":"world"`) || !strings.Contains(output, `"status":200`) {
+		t.Fatalf("root observation output = %q, want answer and status", output)
+	}
+	for _, span := range []tracetest.SpanStub{rootStub, retrieverStub, embeddingStub} {
+		if spanAttr(span.Attributes, attrLangfuseUserID) != "user-1" ||
+			spanAttr(span.Attributes, attrLangfuseSessionID) != "session-1" {
+			t.Fatalf("trace identity missing from %s", span.Name)
+		}
+		if spanAttr(span.Attributes, attrTraceName) != "chat.turn" {
+			t.Fatalf("trace name missing from %s", span.Name)
+		}
+		if got := spanStringSliceAttr(span.Attributes, attrTraceTags); len(got) != 2 {
+			t.Fatalf("trace tags on %s = %#v, want two tags", span.Name, got)
+		}
+		if spanAttr(span.Attributes, attrTraceMetadata+".request_id") != "request-1" {
+			t.Fatalf("request metadata missing from %s", span.Name)
+		}
+	}
+	metadata := spanAttr(rootStub.Attributes, attrTraceMetadata)
+	if strings.Contains(metadata, "must-not-appear") || strings.Contains(metadata, "nested-secret") {
+		t.Fatalf("sensitive metadata leaked into trace: %q", metadata)
+	}
 }

@@ -14,10 +14,9 @@ import (
 // Langfuse v3+ / LiteFuse OTel endpoint (POST /api/public/otel/v1/traces).
 //
 // Auth is HTTP Basic (public_key:secret_key). The x-langfuse-ingestion-version
-// header is the gate opt-in that LiteFuse/Langfuse v3 require for the OTel
-// direct-write path (verified against directWriteHelpers.ts — without it the
-// server returns 400 "requires Python SDK >= 4.0.0"). The x-langfuse-sdk-*
-// markers are sent for parity; WeKnora is a Go client, not the Python SDK.
+// header is the gate opt-in that Langfuse v4 requires for the OTel direct-write
+// path. The endpoint only needs the documented Basic Auth and ingestion
+// headers; do not identify this Go exporter as another SDK.
 func newExporter(ctx context.Context, cfg Config) (sdktrace.SpanExporter, error) {
 	endpoint := strings.TrimRight(cfg.Host, "/") + "/api/public/otel/v1/traces"
 	creds := cfg.PublicKey + ":" + cfg.SecretKey
@@ -26,8 +25,6 @@ func newExporter(ctx context.Context, cfg Config) (sdktrace.SpanExporter, error)
 		otlptracehttp.WithHeaders(map[string]string{
 			"Authorization":                "Basic " + base64.StdEncoding.EncodeToString([]byte(creds)),
 			"x-langfuse-ingestion-version": "4",
-			"x-langfuse-sdk-name":          "python",
-			"x-langfuse-sdk-version":       langfuseScopeVersion,
 		}),
 	}
 	if cfg.RequestTimeout > 0 {

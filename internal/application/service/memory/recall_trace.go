@@ -242,7 +242,8 @@ func (s *Service) selectRecallWithTrace(
 	maxItems, runeBudget := req.MaxItems, req.RuneBudget
 
 	_, lexSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "memory.recall.lexical",
+		Name:            "memory.recall.lexical",
+		ObservationType: "retriever",
 		Input: map[string]interface{}{
 			"query":      langfuse.TruncateRunes(query, recallQueryPreviewRunes),
 			"candidates": len(candidates),
@@ -255,7 +256,8 @@ func (s *Service) selectRecallWithTrace(
 	}, nil, nil)
 
 	vecCtx, vecSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "memory.recall.vector",
+		Name:            "memory.recall.vector",
+		ObservationType: "retriever",
 		Input: map[string]interface{}{
 			"query":      langfuse.TruncateRunes(query, recallQueryPreviewRunes),
 			"candidates": len(candidates),

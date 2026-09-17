@@ -2,6 +2,7 @@ package langfuse
 
 import (
 	"context"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -37,13 +38,18 @@ func GinMiddleware() gin.HandlerFunc {
 		sessionID := extractSessionID(c)
 
 		opts := TraceOptions{
-			Name:      c.Request.Method + " " + c.FullPath(),
+			Name: c.Request.Method + " " + c.FullPath(),
+			Input: map[string]interface{}{
+				"method": c.Request.Method,
+				"path":   c.FullPath(),
+				"query":  sanitizeTraceQuery(c.Request.URL.RawQuery),
+			},
 			UserID:    userID,
 			SessionID: sessionID,
 			Metadata: map[string]interface{}{
 				"http.method": c.Request.Method,
 				"http.path":   c.FullPath(),
-				"http.query":  c.Request.URL.RawQuery,
+				"http.query":  sanitizeTraceQuery(c.Request.URL.RawQuery),
 			},
 			Tags: []string{"http", strings.ToLower(c.Request.Method)},
 		}
@@ -61,6 +67,26 @@ func GinMiddleware() gin.HandlerFunc {
 			"response.size": c.Writer.Size(),
 		}, nil)
 	}
+}
+
+// sanitizeTraceQuery keeps useful non-secret query dimensions while removing
+// credentials commonly carried in callback and authentication URLs. Parsing
+// failures intentionally omit the query instead of sending an unredacted
+// fallback to the external observability backend.
+func sanitizeTraceQuery(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return "[REDACTED]"
+	}
+	for key := range values {
+		if sensitiveField(key) {
+			values[key] = []string{"[REDACTED]"}
+		}
+	}
+	return values.Encode()
 }
 
 // shouldTrace restricts tracing to endpoints where LLM work (or the asynq

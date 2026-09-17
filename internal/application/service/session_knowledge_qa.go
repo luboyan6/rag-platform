@@ -24,7 +24,7 @@ func (s *sessionService) KnowledgeQA(
 	ctx context.Context,
 	req *types.QARequest,
 	eventBus *event.EventBus,
-) error {
+) (retErr error) {
 	logger.Infof(
 		ctx,
 		"Knowledge base question answering parameters, session ID: %s, query: %s, webSearchEnabled: %v",
@@ -37,12 +37,22 @@ func (s *sessionService) KnowledgeQA(
 	// agent override application). This covers the visible gap between trace
 	// start and the first stage observation in the Langfuse timeline.
 	setupCtx, setupSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "qa.setup",
+		Name:            "qa.setup",
+		ObservationType: "chain",
 		Metadata: map[string]interface{}{
 			"session_id": req.Session.ID,
 		},
 	})
 	ctx = setupCtx
+	setupFinished := false
+	defer func() {
+		if setupFinished {
+			return
+		}
+		setupSpan.Finish(nil, map[string]interface{}{
+			"outcome": "error",
+		}, retErr)
+	}()
 
 	// Resolve knowledge bases using shared helper
 	knowledgeBaseIDs, knowledgeIDs, err := s.resolveKnowledgeBases(ctx, req)
@@ -196,7 +206,7 @@ func (s *sessionService) KnowledgeQA(
 			Add(types.MEMORY_RECALL).
 			Add(types.QUERY_UNDERSTAND).
 			Add(types.CHUNK_SEARCH_PARALLEL).
-			Add(types.CHUNK_RERANK).
+			// Add(types.CHUNK_RERANK). // Temporarily disabled until a stable reranker is available.
 			AddIf(req.WebSearchEnabled, types.WEB_FETCH).
 			Add(types.CHUNK_MERGE).
 			Add(types.FILTER_TOP_K).
@@ -220,6 +230,7 @@ func (s *sessionService) KnowledgeQA(
 		"knowledge_base_ids": knowledgeBaseIDs,
 		"search_targets":     len(searchTargets),
 	}, nil, nil)
+	setupFinished = true
 	err = s.KnowledgeQAByEvent(ctx, chatManage, pipeline)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
@@ -703,7 +714,8 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		var stageSpan *langfuse.Span
 		if eventType != types.CHAT_COMPLETION_STREAM {
 			stageCtx, stageSpan = langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-				Name: "pipeline." + string(eventType),
+				Name:            "pipeline." + string(eventType),
+				ObservationType: "chain",
 				Metadata: map[string]interface{}{
 					"event_type": string(eventType),
 					"session_id": chatManage.SessionID,
@@ -886,7 +898,7 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	// Use specific event list, only including retrieval-related events, not LLM summarization
 	searchEvents := []types.EventType{
 		types.CHUNK_SEARCH, // Vector search
-		types.CHUNK_RERANK, // Rerank search results
+		// types.CHUNK_RERANK, // Temporarily disabled until a stable reranker is available.
 		types.CHUNK_MERGE,  // Merge search results
 		types.FILTER_TOP_K, // Filter top K results
 	}
@@ -896,7 +908,8 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	for _, event := range searchEvents {
 		logger.Infof(ctx, "Starting to trigger search event: %v", event)
 		stageCtx, stageSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-			Name: "pipeline." + string(event),
+			Name:            "pipeline." + string(event),
+			ObservationType: "chain",
 			Metadata: map[string]interface{}{
 				"event_type": string(event),
 				"flow":       "search_knowledge",

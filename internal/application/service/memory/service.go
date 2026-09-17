@@ -112,7 +112,8 @@ func (s *Service) enabledScope(ctx context.Context) (interfaces.MemoryScope, *ty
 // degrade into an ordinary answer rather than into a failed request.
 func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRecall {
 	recallCtx, recallSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "memory.recall",
+		Name:            "memory.recall",
+		ObservationType: "chain",
 		Input: map[string]interface{}{
 			"query": langfuse.TruncateRunes(query, recallQueryPreviewRunes),
 		},
@@ -939,7 +940,8 @@ const retrievalBackgroundRuneBudget = 240
 // assembly, because it runs before the first token of every retrieval turn.
 func (s *Service) RetrievalContextFor(ctx context.Context) interfaces.RetrievalContext {
 	condCtx, condSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "memory.retrieval_context",
+		Name:            "memory.retrieval_context",
+		ObservationType: "retriever",
 	})
 	scope, cfg, ok := s.enabledScope(condCtx)
 	if !ok || !cfg.RetrievalConditioningEnabled() {

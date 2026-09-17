@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,13 +54,17 @@ func argKeys(args map[string]any) []string {
 }
 
 // traceArgumentValue keeps valid model-emitted JSON structured in Langfuse
-// while preserving malformed payloads verbatim for diagnosis.
+// while redacting secret-like fields. Malformed arguments are represented by
+// shape metadata rather than copied verbatim into the external backend.
 func traceArgumentValue(raw string) interface{} {
 	var value interface{}
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
-		return raw
+		return map[string]interface{}{
+			"malformed": true,
+			"bytes":     len(raw),
+		}
 	}
-	return value
+	return sanitizeToolTraceValue(value, 0)
 }
 
 // buildToolSpanInput exposes both sides of the model-context boundary:
@@ -92,10 +97,53 @@ func buildToolSpanInput(tc types.LLMToolCall, resolvedArgs map[string]any, sensi
 	return map[string]interface{}{
 		"tool_call_id":        tc.ID,
 		"model_arguments":     traceArgumentValue(modelArguments),
-		"resolved_arguments":  resolvedArgs,
+		"resolved_arguments":  sanitizeToolTraceValue(resolvedArgs, 0),
 		"argument_resolution": resolution,
 		"unresolved_handles":  tc.UnresolvedHandles,
 	}
+}
+
+func sanitizeToolTraceValue(value interface{}, depth int) interface{} {
+	if depth >= 4 {
+		return "[TRUNCATED]"
+	}
+	switch value := value.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(value))
+		for key, item := range value {
+			if sensitiveToolField(key) {
+				out[key] = "[REDACTED]"
+				continue
+			}
+			out[key] = sanitizeToolTraceValue(item, depth+1)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, 0, len(value))
+		for _, item := range value {
+			out = append(out, sanitizeToolTraceValue(item, depth+1))
+		}
+		return out
+	case string:
+		return truncateForLangfuse(value, 1000)
+	default:
+		return value
+	}
+}
+
+func sensitiveToolField(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	compact := strings.NewReplacer("_", "", "-", "", ".", "").Replace(normalized)
+	for _, field := range []string{
+		"password", "passwd", "secret", "apikey", "authorization", "cookie",
+		"accesstoken", "refreshtoken", "idtoken", "privatekey", "authtoken",
+	} {
+		if normalized == field || strings.Contains(normalized, field) ||
+			compact == field || strings.Contains(compact, field) {
+			return true
+		}
+	}
+	return normalized == "token" || compact == "token"
 }
 
 // finishToolSpan serialises a completed tool call into a Langfuse span
@@ -495,8 +543,8 @@ func (e *AgentEngine) runToolCall(
 		"tool_index":   fmt.Sprintf("%d/%s", i+1, total),
 	})
 
-	// Open a Langfuse span for the tool invocation so the Langfuse UI shows
-	// trace → agent.execute → agent.round.N → agent.tool.<name>, alongside
+	// Open a Langfuse tool observation so the Langfuse UI shows
+	// trace → agent.execute → agent.round → agent.tool, alongside
 	// any nested generations (embedding/rerank/VLM) that the tool itself
 	// triggers. No-op when Langfuse is disabled.
 	mgr := langfuse.GetManager()
@@ -511,11 +559,13 @@ func (e *AgentEngine) runToolCall(
 	}
 	argumentResolution, _ := toolSpanInput["argument_resolution"].(string)
 	toolCtx, toolSpan := mgr.StartSpan(ctx, langfuse.SpanOptions{
-		Name:  "agent.tool." + executionName,
-		Input: toolSpanInput,
+		Name:            "agent.tool",
+		ObservationType: "tool",
+		Input:           toolSpanInput,
 		Metadata: map[string]interface{}{
 			"iteration":               iteration,
 			"round":                   round,
+			"tool_name":               executionName,
 			"tool_index":              i + 1,
 			"tool_call_id":            tc.ID,
 			"session_id":              sessionID,

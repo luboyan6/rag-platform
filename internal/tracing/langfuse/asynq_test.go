@@ -59,8 +59,13 @@ func TestAsynqMiddleware_TraceparentPropagation(t *testing.T) {
 	m, exp := newTestManager(t)
 
 	// Upstream caller opens a span and injects a traceparent onto the payload.
-	upstreamCtx, upstreamSpan := m.Tracer().Start(context.Background(), "upstream-http")
-	remoteTraceID := upstreamSpan.SpanContext().TraceID()
+	upstreamCtx, upstreamTrace := m.StartTrace(context.Background(), TraceOptions{
+		Name:      "POST /api/v1/knowledge-chat/:session_id",
+		UserID:    "user-async",
+		SessionID: "session-async",
+		Tags:      []string{"http", "post"},
+	})
+	remoteTraceID := upstreamTrace.ID
 	payload := &dummyPayload{KnowledgeID: "k1"}
 	InjectTracing(upstreamCtx, payload)
 	if payload.LangfuseTraceparent == "" {
@@ -72,14 +77,25 @@ func TestAsynqMiddleware_TraceparentPropagation(t *testing.T) {
 	if err := mw.ProcessTask(context.Background(), asynq.NewTask("test:type", raw)); err != nil {
 		t.Fatalf("handler err: %v", err)
 	}
+	upstreamTrace.Finish(nil, nil)
 
 	for _, s := range exp.GetSpans() {
-		if s.Name != "asynq.test:type" {
+		if s.Name != "asynq.task" {
 			continue
 		}
-		if s.SpanContext.TraceID() != remoteTraceID {
+		if s.SpanContext.TraceID().String() != remoteTraceID {
 			t.Errorf("worker span trace id = %s, want upstream %s (traceparent not propagated)",
 				s.SpanContext.TraceID(), remoteTraceID)
+		}
+		if spanType(s) != obsTypeChain ||
+			spanAttr(s.Attributes, attrLangfuseUserID) != "user-async" ||
+			spanAttr(s.Attributes, attrLangfuseSessionID) != "session-async" ||
+			spanAttr(s.Attributes, attrTraceName) != "POST /api/v1/knowledge-chat/:session_id" ||
+			len(spanStringSliceAttr(s.Attributes, attrTraceTags)) != 2 {
+			t.Errorf("worker span lost trace-wide context: type=%q user=%q session=%q name=%q tags=%#v",
+				spanType(s), spanAttr(s.Attributes, attrLangfuseUserID),
+				spanAttr(s.Attributes, attrLangfuseSessionID), spanAttr(s.Attributes, attrTraceName),
+				spanStringSliceAttr(s.Attributes, attrTraceTags))
 		}
 		return
 	}
@@ -88,7 +104,7 @@ func TestAsynqMiddleware_TraceparentPropagation(t *testing.T) {
 
 // TestAsynqMiddleware_StandaloneTrace asserts that when the payload carries
 // NO upstream traceparent (e.g. a scheduled job), the middleware opens a
-// standalone trace named after the task type.
+// stable standalone root and keeps the task type in metadata/tags.
 func TestAsynqMiddleware_StandaloneTrace(t *testing.T) {
 	_, exp := newTestManager(t)
 
@@ -100,24 +116,50 @@ func TestAsynqMiddleware_StandaloneTrace(t *testing.T) {
 		t.Fatalf("handler err: %v", err)
 	}
 
-	// The standalone run opens a root trace span ("asynq.scheduled:ping",
-	// type=trace) plus a worker span with the same name (type=span).
+	// The standalone run opens a root observation ("asynq.run", type=span)
+	// plus a worker observation ("asynq.task", type=chain).
 	var sawRoot, sawSpan bool
 	for _, s := range exp.GetSpans() {
-		if s.Name != "asynq.scheduled:ping" {
-			continue
-		}
-		switch spanType(s) {
-		case obsTypeTrace:
+		if s.Name == "asynq.run" && !s.Parent.IsValid() {
 			sawRoot = true
-		case obsTypeSpan:
+		}
+		if s.Name == "asynq.task" && spanType(s) == obsTypeChain {
 			sawSpan = true
 		}
 	}
 	if !sawRoot {
-		t.Error("standalone run should open a root trace span named asynq.scheduled:ping")
+		t.Error("standalone run should open a root observation named asynq.run")
 	}
 	if !sawSpan {
 		t.Error("standalone run should open a worker span")
+	}
+}
+
+func TestSpanInputFromPayloadRedactsSecrets(t *testing.T) {
+	input := spanInputFromPayload([]byte(`{"query":"hello","api_key":"secret-value","nested":{"password":"password-value"},"lf_traceparent":"trace"}`))
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal redacted input: %v", err)
+	}
+	got := string(encoded)
+	if !strings.Contains(got, "hello") {
+		t.Fatalf("redacted payload lost useful query: %s", got)
+	}
+	for _, secret := range []string{"secret-value", "password-value", "trace"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("payload secret %q leaked into trace input: %s", secret, got)
+		}
+	}
+}
+
+func TestSanitizeTraceQueryRedactsCredentials(t *testing.T) {
+	got := sanitizeTraceQuery("q=hello&access_token=secret&state=opaque&limit=5")
+	if !strings.Contains(got, "q=hello") || !strings.Contains(got, "limit=5") {
+		t.Fatalf("useful query dimensions lost: %s", got)
+	}
+	for _, secret := range []string{"secret", "opaque"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("query secret %q leaked: %s", secret, got)
+		}
 	}
 }

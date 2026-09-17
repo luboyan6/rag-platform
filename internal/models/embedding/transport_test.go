@@ -2,12 +2,66 @@ package embedding
 
 import (
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
+
+func TestEmbeddingTransportEnvironmentProxy(t *testing.T) {
+	const helper = "WEKNORA_EMBEDDING_PROXY_TEST"
+	if os.Getenv(helper) == "1" {
+		if sharedEmbeddingHTTPTransport.Proxy == nil {
+			t.Fatal("embedding transport must honor environment proxy settings")
+		}
+		for _, scheme := range []string{"http", "https"} {
+			req, err := http.NewRequest(http.MethodPost, scheme+"://embedding.example.test/v1/embeddings", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxy, err := sharedEmbeddingHTTPTransport.Proxy(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if proxy != nil {
+				got = proxy.String()
+			}
+			if want := os.Getenv("WEKNORA_EMBEDDING_PROXY_EXPECTED"); got != want {
+				t.Fatalf("%s proxy = %q, want %q", scheme, got, want)
+			}
+		}
+		return
+	}
+
+	// net/http caches proxy settings, so each environment needs a fresh process.
+	for _, mode := range []string{"proxy", "no_proxy", "direct"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "REQUEST_METHOD"} {
+				t.Setenv(key, "")
+			}
+			expected := ""
+			if mode != "direct" {
+				expected = "http://127.0.0.1:17897"
+				t.Setenv("http_proxy", expected)
+				t.Setenv("https_proxy", expected)
+			}
+			if mode == "no_proxy" {
+				t.Setenv("NO_PROXY", "embedding.example.test")
+				expected = ""
+			}
+			t.Setenv(helper, "1")
+			t.Setenv("WEKNORA_EMBEDDING_PROXY_EXPECTED", expected)
+			cmd := exec.Command(os.Args[0], "-test.run=^TestEmbeddingTransportEnvironmentProxy$")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("proxy selection check failed: %v\n%s", err, output)
+			}
+		})
+	}
+}
 
 func TestNewEmbeddingHTTPClient_ReusesTransport(t *testing.T) {
 	firstTimeout := 15 * time.Second

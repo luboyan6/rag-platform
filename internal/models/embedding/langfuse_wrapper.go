@@ -20,9 +20,10 @@ func (l *langfuseEmbedder) Embed(ctx context.Context, text string) ([]float32, e
 		return l.inner.Embed(ctx, text)
 	}
 	genCtx, gen := mgr.StartGeneration(ctx, langfuse.GenerationOptions{
-		Name:  "embedding.embed",
-		Model: l.inner.GetModelName(),
-		Input: text,
+		Name:            "embedding.embed",
+		Model:           l.inner.GetModelName(),
+		Input:           text,
+		ObservationType: "embedding",
 		Metadata: map[string]interface{}{
 			"model_id":   l.inner.GetModelID(),
 			"dimensions": l.inner.GetDimensions(),
@@ -47,8 +48,9 @@ func (l *langfuseEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]
 		return l.inner.BatchEmbed(ctx, texts)
 	}
 	genCtx, gen := mgr.StartGeneration(ctx, langfuse.GenerationOptions{
-		Name:  "embedding.batch_embed",
-		Model: l.inner.GetModelName(),
+		Name:            "embedding.batch_embed",
+		Model:           l.inner.GetModelName(),
+		ObservationType: "embedding",
 		Input: map[string]interface{}{
 			"count": len(texts),
 			// Avoid sending megabytes of full text — Langfuse truncates but

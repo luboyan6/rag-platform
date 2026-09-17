@@ -150,6 +150,22 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		return nil, nil, errors.NewBadRequestError("Query content cannot be empty")
 	}
 
+	// Replace the generic HTTP root input with the meaningful user turn once
+	// the request has passed validation. Do not attach the raw request body:
+	// it can contain base64 images, uploaded files, or other confidential
+	// fields that are not useful for trace-level debugging.
+	if activeTrace, ok := langfuse.TraceFromContext(ctx); ok {
+		activeTrace.SetInput(map[string]interface{}{
+			"query":                langfuse.TruncateRunes(request.Query, 2000),
+			"session_id":           sessionID,
+			"channel":              request.Channel,
+			"knowledge_base_count": len(request.KnowledgeBaseIDs),
+			"knowledge_count":      len(request.KnowledgeIds),
+			"image_count":          len(request.Images),
+			"attachment_count":     len(request.AttachmentUploads) + len(request.AttachmentIDs),
+		})
+	}
+
 	// Resolve the storage-reference representation up front: once the SSE stream
 	// has started an invalid value can no longer be reported as a 400.
 	resourceRewriter, err := h.resolveStreamRewriter(c)
@@ -1682,6 +1698,13 @@ func (h *Handler) completeAssistantMessage(
 	assistantMessage.UpdatedAt = time.Now()
 	assistantMessage.IsCompleted = true
 	_ = h.messageService.UpdateMessage(ctx, assistantMessage)
+	if activeTrace, ok := langfuse.TraceFromContext(ctx); ok {
+		activeTrace.SetOutput(map[string]interface{}{
+			"answer":     langfuse.TruncateRunes(assistantMessage.Content, 4000),
+			"status":     "completed",
+			"message_id": assistantMessage.ID,
+		})
+	}
 
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
 	// Use WithoutCancel so the goroutine survives after the HTTP request context is done.

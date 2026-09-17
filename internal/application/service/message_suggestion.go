@@ -266,7 +266,8 @@ func (s *messageSuggestionService) generate(
 	// of auto-creating an orphan root.
 	ctx = langfuse.AttachTraceparent(ctx, message.ExecutionContext.LangfuseTraceparent)
 	ctx, span := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "follow_up.suggestions",
+		Name:            "follow_up.suggestions",
+		ObservationType: "chain",
 		Input: map[string]interface{}{
 			"session_id":           message.SessionID,
 			"assistant_message_id": message.ID,

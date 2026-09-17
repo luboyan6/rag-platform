@@ -154,7 +154,7 @@ flowchart LR
     subgraph MW["ServeMux 中间件链 (安装顺序)"]
         M1["1. asynqdl 死信中间件<br/>(最先安装, 看到原始错误)"]
         M2["2. backgroundTaskMiddleware<br/>(标记后台任务, 模型并发治理)"]
-        M3["3. langfuse.AsynqMiddleware<br/>(trace 续接 + SPAN 包裹)"]
+        M3["3. langfuse.AsynqMiddleware<br/>(trace 续接 + Chain 包裹)"]
     end
     Workers --> MW --> H["业务 Handler<br/>(KnowledgeService.ProcessDocument 等)"]
 ```
@@ -165,7 +165,7 @@ flowchart LR
 
 1. **`asynqdl.MiddlewareWithCallback`（死信）** — 必须最先安装，以便看到 handler 返回的原始错误（后续中间件可能转换错误）。见[失败重试与死信处理](#_7-失败重试与死信处理)。
 2. **`backgroundTaskMiddleware`** — 对每个任务 context 打 `types.WithBackgroundTask` 标记，使 per-model 聊天并发治理器（chat concurrency governor）对 ingestion/enrichment 的 LLM 调用限流，但不影响交互式用户聊天。
-3. **`langfuse.AsynqMiddleware`** — Langfuse 关闭时为直通；开启时续接上游 HTTP trace 或新开独立 trace，将 handler 执行包成 SPAN。
+3. **`langfuse.AsynqMiddleware`** — Langfuse 关闭时为直通；开启时续接上游 HTTP trace 或新开 `asynq.run` 根 observation，将 handler 执行包成稳定命名的 `asynq.task` Chain observation。
 
 ### 重试退避策略 {#_4-4-重试退避策略}
 
@@ -347,7 +347,7 @@ type Event struct {
 1. **运维面板 / Runtime API**（第 6.2 节）：队列深度、最老 pending 延迟（`latency_ms`）、当日 processed/failed、worker 心跳；按状态浏览任务、查看 `last_error`、`retried/max_retry`、执行 `run_now`/`cancel`/`delete`。
 2. **死信表 SQL**：`SELECT * FROM task_dead_letters WHERE scope='knowledge_base' AND scope_id='<kbID>' ORDER BY id DESC;` 或按 `task_type` 聚合失败率；`task_pending_ops` 的 `PendingCount` / `enqueued_at` 可发现从未排空的积压。
 3. **日志**：worker 侧统一走 `internal/logger`，关键前缀有 `[TaskInspector]`（取消/巡检）、`asynq dead-letter`、`[SyncTask]`（Lite 模式）、`[Housekeeping]`；启动时每个 pool 打印 `asynq <pool> server starting with concurrency=...`。
-4. **Langfuse trace**：开启后每个 asynq 任务是一个 `asynq.<task_type>` SPAN（含 queue、retry、payload 大小元数据），与触发它的 HTTP 请求同 trace（见可观测性文档）。
+4. **Langfuse trace**：开启后每个 asynq 任务是一个稳定命名的 `asynq.task` Chain observation（含 `task_type`、queue、retry、payload 大小元数据），与触发它的 HTTP 请求同 trace（见可观测性文档）；无上游 trace 的任务根为 `asynq.run`。
 5. **平台审计**：对 archived 任务的 `run_now`/`delete`/purge 操作写入 `audit_logs`（`system.queue_task_*` 动作），可追责。
 
 ## 实现参考

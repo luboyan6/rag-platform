@@ -35,11 +35,16 @@ const (
 	attrTraceOutput        = "langfuse.trace.output"
 	attrTraceMetadata      = "langfuse.trace.metadata"
 	attrTraceTags          = "langfuse.trace.tags"
-	attrUserID             = "user.id"
-	attrSessionID          = "session.id"
-	attrEnvironment        = "langfuse.environment"
-	attrRelease            = "langfuse.release"
-	attrLangfusePubKey     = "langfuse.public.key"
+	// Langfuse's namespaced identity attributes are the canonical v4 keys.
+	// Keep the generic OTel aliases as well for compatibility with existing
+	// Langfuse/LiteFuse installations and older traces.
+	attrLangfuseUserID    = "langfuse.user.id"
+	attrLangfuseSessionID = "langfuse.session.id"
+	attrUserID            = "user.id"
+	attrSessionID         = "session.id"
+	attrEnvironment       = "langfuse.environment"
+	attrRelease           = "langfuse.release"
+	attrLangfusePubKey    = "langfuse.public.key"
 
 	// The LiteFuse/Langfuse v3 OTel gate keys the "events_full"
 	// direct-write path on the instrumentation scope name. langfuse-python
@@ -53,9 +58,16 @@ const (
 
 // Observation types carried by the langfuse.observation.type attribute.
 const (
-	obsTypeTrace      = "trace"
 	obsTypeSpan       = "span"
 	obsTypeGeneration = "generation"
+	obsTypeEvent      = "event"
+	obsTypeEmbedding  = "embedding"
+	obsTypeAgent      = "agent"
+	obsTypeTool       = "tool"
+	obsTypeChain      = "chain"
+	obsTypeRetriever  = "retriever"
+	obsTypeGuardrail  = "guardrail"
+	obsTypeEvaluator  = "evaluator"
 )
 
 func isoTime(t time.Time) string {

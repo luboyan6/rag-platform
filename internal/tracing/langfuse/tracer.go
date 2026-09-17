@@ -3,6 +3,8 @@ package langfuse
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -17,9 +19,19 @@ import (
 // ID is the OTel trace id (W3C 32-hex), which — when the request carried a
 // traceparent header — is the upstream caller's trace id (sop3 correlation).
 type Trace struct {
-	ID      string
-	span    trace.Span
-	manager *Manager
+	ID          string
+	span        trace.Span
+	manager     *Manager
+	mu          sync.Mutex
+	finished    bool
+	input       interface{}
+	output      interface{}
+	name        string
+	userID      string
+	sessionID   string
+	tags        []string
+	environment string
+	release     string
 	// metadata holds the metadata set at StartTrace so Finish can merge (not
 	// overwrite) the finish-time metadata into it before serializing.
 	metadata map[string]interface{}
@@ -73,6 +85,9 @@ type GenerationOptions struct {
 	Input           interface{}
 	Metadata        map[string]interface{}
 	ModelParameters map[string]interface{}
+	// ObservationType defaults to generation. Embeddings use the more
+	// specific "embedding" type while still retaining model/usage fields.
+	ObservationType string
 }
 
 // SpanOptions configures a new SPAN observation.
@@ -80,6 +95,10 @@ type SpanOptions struct {
 	Name     string
 	Input    interface{}
 	Metadata map[string]interface{}
+	// ObservationType defaults to span. Use the most specific Langfuse type
+	// available for semantic operations such as agent, tool, chain, or
+	// retriever.
+	ObservationType string
 }
 
 // StartTrace opens a root span. When ctx carries a remote SpanContext (from a
@@ -92,37 +111,73 @@ func (m *Manager) StartTrace(ctx context.Context, opts TraceOptions) (context.Co
 		return ctx, &Trace{manager: m}
 	}
 	name := opts.Name
-	attrs := []attribute.KeyValue{attribute.String(attrObsType, obsTypeTrace)}
-	if opts.Name != "" {
-		attrs = append(attrs, attribute.String(attrTraceName, opts.Name))
+	if strings.TrimSpace(name) == "" {
+		name = "request"
 	}
-	if opts.UserID != "" {
-		attrs = append(attrs, attribute.String(attrUserID, opts.UserID))
-	}
-	if opts.SessionID != "" {
-		attrs = append(attrs, attribute.String(attrSessionID, opts.SessionID))
-	}
+	metadata := sanitizeMetadata(opts.Metadata)
+	tags := normalizeTags(opts.Tags)
 	env := opts.Environment
 	if env == "" {
 		env = m.cfg.Environment
-	}
-	if env != "" {
-		attrs = append(attrs, attribute.String(attrEnvironment, env))
 	}
 	rel := opts.Release
 	if rel == "" {
 		rel = m.cfg.Release
 	}
+	t := &Trace{
+		manager:     m,
+		name:        name,
+		userID:      opts.UserID,
+		sessionID:   opts.SessionID,
+		tags:        tagsCopy(tags),
+		environment: env,
+		release:     rel,
+		input:       opts.Input,
+		metadata:    metadata,
+	}
+	ctx = withTraceBaggage(ctx, m, t)
+	attrs := []attribute.KeyValue{attribute.String(attrObsType, obsTypeSpan)}
+	attrs = append(attrs, attribute.String(attrTraceName, name))
+	if opts.UserID != "" {
+		attrs = append(attrs,
+			attribute.String(attrLangfuseUserID, opts.UserID),
+			attribute.String(attrUserID, opts.UserID),
+		)
+	}
+	if opts.SessionID != "" {
+		attrs = append(attrs,
+			attribute.String(attrLangfuseSessionID, opts.SessionID),
+			attribute.String(attrSessionID, opts.SessionID),
+		)
+	}
+	if env != "" {
+		attrs = append(attrs, attribute.String(attrEnvironment, env))
+	}
 	if rel != "" {
 		attrs = append(attrs, attribute.String(attrRelease, rel))
 	}
-	attrs = append(attrs, jsonAttr(attrTraceInput, opts.Input))
-	attrs = append(attrs, jsonAttr(attrTraceMetadata, opts.Metadata))
-	if len(opts.Tags) > 0 {
-		attrs = append(attrs, jsonAttr(attrTraceTags, opts.Tags))
+	if opts.Input != nil {
+		// v4 reads root input/output from the observation attributes. Keep the
+		// old trace keys during the migration for existing self-hosted data.
+		attrs = append(attrs,
+			jsonAttr(attrObsInput, opts.Input),
+			jsonAttr(attrTraceInput, opts.Input),
+		)
+	}
+	if len(metadata) > 0 {
+		attrs = append(attrs,
+			jsonAttr(attrObsMetadata, metadata),
+			jsonAttr(attrTraceMetadata, metadata),
+		)
+		attrs = append(attrs, flatMetadataAttributes(attrObsMetadata, metadata)...)
+		attrs = append(attrs, flatMetadataAttributes(attrTraceMetadata, metadata)...)
+	}
+	if len(tags) > 0 {
+		attrs = append(attrs, attribute.StringSlice(attrTraceTags, tags))
 	}
 	ctx, span := m.tracer.Start(ctx, name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
-	t := &Trace{ID: span.SpanContext().TraceID().String(), span: span, manager: m, metadata: opts.Metadata}
+	t.ID = span.SpanContext().TraceID().String()
+	t.span = span
 	return withTrace(ctx, t), t
 }
 
@@ -135,12 +190,74 @@ func (t *Trace) Finish(output interface{}, metadata map[string]interface{}) {
 	if t == nil || t.manager == nil || !t.manager.Enabled() || t.span == nil {
 		return
 	}
-	attrs := []attribute.KeyValue{jsonAttr(attrTraceOutput, output)}
-	if merged := mergeMetadata(t.metadata, metadata); merged != nil {
-		attrs = append(attrs, jsonAttr(attrTraceMetadata, merged))
+	t.mu.Lock()
+	if t.finished {
+		t.mu.Unlock()
+		return
 	}
-	t.span.SetAttributes(attrs...)
-	t.span.End()
+	t.finished = true
+	if output != nil {
+		t.output = mergeTraceValues(t.output, output)
+	}
+	finalOutput := t.output
+	merged := mergeMetadata(t.metadata, sanitizeMetadata(metadata))
+	span := t.span
+	t.mu.Unlock()
+
+	attrs := make([]attribute.KeyValue, 0, 4)
+	if finalOutput != nil {
+		attrs = append(attrs,
+			jsonAttr(attrObsOutput, finalOutput),
+			jsonAttr(attrTraceOutput, finalOutput),
+		)
+	}
+	if merged != nil {
+		attrs = append(attrs,
+			jsonAttr(attrObsMetadata, merged),
+			jsonAttr(attrTraceMetadata, merged),
+		)
+		attrs = append(attrs, flatMetadataAttributes(attrObsMetadata, merged)...)
+		attrs = append(attrs, flatMetadataAttributes(attrTraceMetadata, merged)...)
+	}
+	span.SetAttributes(attrs...)
+	span.End()
+}
+
+// SetInput updates the meaningful application input on the root observation.
+// Handlers use this after request validation so the trace contains the user
+// query rather than the raw HTTP body or framework arguments.
+func (t *Trace) SetInput(input interface{}) {
+	if t == nil || t.manager == nil || !t.manager.Enabled() || t.span == nil {
+		return
+	}
+	t.mu.Lock()
+	if t.finished {
+		t.mu.Unlock()
+		return
+	}
+	t.input = input
+	span := t.span
+	t.mu.Unlock()
+	span.SetAttributes(jsonAttr(attrObsInput, input), jsonAttr(attrTraceInput, input))
+}
+
+// SetOutput updates the meaningful application output on the root
+// observation. A later Finish call merges map outputs so HTTP status and the
+// assistant answer can coexist in the Langfuse Output pane.
+func (t *Trace) SetOutput(output interface{}) {
+	if t == nil || t.manager == nil || !t.manager.Enabled() || t.span == nil {
+		return
+	}
+	t.mu.Lock()
+	if t.finished {
+		t.mu.Unlock()
+		return
+	}
+	t.output = mergeTraceValues(t.output, output)
+	finalOutput := t.output
+	span := t.span
+	t.mu.Unlock()
+	span.SetAttributes(jsonAttr(attrObsOutput, finalOutput), jsonAttr(attrTraceOutput, finalOutput))
 }
 
 // ResumeTrace reconstructs a *Trace handle from an externally-provided W3C
@@ -172,7 +289,13 @@ func (m *Manager) ResumeTrace(ctx context.Context, traceID, parentSpanID string)
 		Remote:     true,
 	})
 	ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
-	t := &Trace{ID: traceID, manager: m}
+	t := &Trace{
+		ID:        traceID,
+		manager:   m,
+		userID:    userIDFromCtx(ctx),
+		sessionID: sessionIDFromCtx(ctx),
+	}
+	ctx = withTraceBaggage(ctx, m, t)
 	return withTrace(ctx, t), t
 }
 
@@ -226,18 +349,27 @@ func (m *Manager) startSpan(ctx context.Context, opts SpanOptions, createTrace b
 		// never exported and this span's parent points at a missing span.
 		ctx, autoTrace = m.StartTrace(ctx, TraceOptions{Name: opts.Name})
 	}
-	attrs := []attribute.KeyValue{
-		attribute.String(attrObsType, obsTypeSpan),
-		jsonAttr(attrObsInput, opts.Input),
-		jsonAttr(attrObsMetadata, opts.Metadata),
+	if t, ok := traceFromCtx(ctx); ok {
+		ctx = withTraceBaggage(ctx, m, t)
 	}
-	ctx, span := m.tracer.Start(ctx, opts.Name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
+	name := opts.Name
+	if strings.TrimSpace(name) == "" {
+		name = "span"
+	}
+	metadata := sanitizeMetadata(opts.Metadata)
+	attrs := []attribute.KeyValue{
+		attribute.String(attrObsType, observationType(opts.ObservationType, obsTypeSpan)),
+		jsonAttr(attrObsInput, opts.Input),
+		jsonAttr(attrObsMetadata, metadata),
+	}
+	attrs = append(attrs, flatMetadataAttributes(attrObsMetadata, metadata)...)
+	ctx, span := m.tracer.Start(ctx, name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
 	return ctx, &Span{
 		ID:        span.SpanContext().SpanID().String(),
 		span:      span,
 		manager:   m,
-		name:      opts.Name,
-		metadata:  opts.Metadata,
+		name:      name,
+		metadata:  metadata,
 		autoTrace: autoTrace,
 	}
 }
@@ -253,8 +385,9 @@ func (s *Span) Finish(output interface{}, metadata map[string]interface{}, err e
 		return
 	}
 	attrs := []attribute.KeyValue{jsonAttr(attrObsOutput, output)}
-	if merged := mergeMetadata(s.metadata, metadata); merged != nil {
+	if merged := mergeMetadata(s.metadata, sanitizeMetadata(metadata)); merged != nil {
 		attrs = append(attrs, jsonAttr(attrObsMetadata, merged))
+		attrs = append(attrs, flatMetadataAttributes(attrObsMetadata, merged)...)
 	}
 	s.span.SetAttributes(attrs...)
 	if err != nil {
@@ -282,20 +415,33 @@ func (m *Manager) StartGeneration(ctx context.Context, opts GenerationOptions) (
 		// gets exported and this generation's parent points at nothing).
 		ctx, autoTrace = m.StartTrace(ctx, TraceOptions{Name: opts.Name})
 	}
+	if t, ok := traceFromCtx(ctx); ok {
+		ctx = withTraceBaggage(ctx, m, t)
+	}
+	name := opts.Name
+	if strings.TrimSpace(name) == "" {
+		name = "generation"
+	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		model = "unknown"
+	}
+	metadata := sanitizeMetadata(opts.Metadata)
 	attrs := []attribute.KeyValue{
-		attribute.String(attrObsType, obsTypeGeneration),
-		attribute.String(attrObsModel, opts.Model),
+		attribute.String(attrObsType, observationType(opts.ObservationType, obsTypeGeneration)),
+		attribute.String(attrObsModel, model),
 		jsonAttr(attrObsInput, opts.Input),
-		jsonAttr(attrObsMetadata, opts.Metadata),
+		jsonAttr(attrObsMetadata, metadata),
 		jsonAttr(attrObsModelParams, opts.ModelParameters),
 	}
-	ctx, span := m.tracer.Start(ctx, opts.Name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
+	attrs = append(attrs, flatMetadataAttributes(attrObsMetadata, metadata)...)
+	ctx, span := m.tracer.Start(ctx, name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
 	g := &Generation{
 		ID:        span.SpanContext().SpanID().String(),
 		span:      span,
 		manager:   m,
-		model:     opts.Model,
-		name:      opts.Name,
+		model:     model,
+		name:      name,
 		autoTrace: autoTrace,
 	}
 	return ctx, g
@@ -350,6 +496,28 @@ func mergeMetadata(start, finish map[string]interface{}) map[string]interface{} 
 	return merged
 }
 
+func mergeTraceValues(existing, update interface{}) interface{} {
+	if existing == nil {
+		return update
+	}
+	if update == nil {
+		return existing
+	}
+	left, leftOK := existing.(map[string]interface{})
+	right, rightOK := update.(map[string]interface{})
+	if !leftOK || !rightOK {
+		return update
+	}
+	merged := make(map[string]interface{}, len(left)+len(right))
+	for key, value := range left {
+		merged[key] = value
+	}
+	for key, value := range right {
+		merged[key] = value
+	}
+	return merged
+}
+
 // jsonAttr serializes v to a compact JSON string and wraps it as a string
 // OTel attribute — matching how langfuse-python stores structured fields
 // (input/output/metadata/usage) on spans. nil/zero values return an empty
@@ -358,6 +526,7 @@ func jsonAttr(key string, v interface{}) attribute.KeyValue {
 	if v == nil {
 		return attribute.KeyValue{Key: attribute.Key(key)}
 	}
+	v = sanitizeTraceValue(v)
 	b, err := json.Marshal(v)
 	if err != nil {
 		logger.Warnf(context.Background(), "[Langfuse] marshal attr %s failed: %v", key, err)

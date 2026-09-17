@@ -713,6 +713,10 @@ func stripRedirectSensitiveHeaders(req *http.Request) {
 // by SSRFSafeDialContext. The transport carries no per-request timeout and no
 // redirect policy — those live on the *http.Client — so a single transport can
 // be shared across many clients to pool keep-alive connections globally.
+//
+// Environment proxy selection is deliberately opt-in. This transport is also
+// used by storage and database clients, where silently routing private or
+// internal endpoints through a process-wide proxy can break connectivity.
 func NewSSRFSafeTransport(config SSRFSafeHTTPClientConfig) *http.Transport {
 	return &http.Transport{
 		DisableKeepAlives:  config.DisableKeepAlives,
@@ -720,6 +724,18 @@ func NewSSRFSafeTransport(config SSRFSafeHTTPClientConfig) *http.Transport {
 		// Dial with SSRF protection - validates resolved IPs before connecting
 		DialContext: SSRFSafeDialContext,
 	}
+}
+
+// NewSSRFSafeTransportWithEnvironmentProxy builds an SSRF-safe transport that
+// honors HTTP_PROXY, HTTPS_PROXY, and NO_PROXY. Callers must opt in because
+// NewSSRFSafeTransport is also used for internal storage and database clients.
+// When used through NewSSRFSafeHTTPClientWithEnvironmentProxy, the request
+// target is still checked by SSRFValidatingRoundTripper and the proxy
+// connection is still checked by SSRFSafeDialContext.
+func NewSSRFSafeTransportWithEnvironmentProxy(config SSRFSafeHTTPClientConfig) *http.Transport {
+	transport := NewSSRFSafeTransport(config)
+	transport.Proxy = http.ProxyFromEnvironment
+	return transport
 }
 
 // newSSRFCheckRedirect returns a CheckRedirect policy that enforces the redirect
@@ -809,6 +825,18 @@ func NewSSRFSafeHTTPClientWithTransport(
 // upstream should share one NewSSRFSafeTransport via NewSSRFSafeHTTPClientWithTransport instead.
 func NewSSRFSafeHTTPClient(config SSRFSafeHTTPClientConfig) *http.Client {
 	return NewSSRFSafeHTTPClientWithTransport(config, NewSSRFSafeTransport(config))
+}
+
+// NewSSRFSafeHTTPClientWithEnvironmentProxy creates an SSRF-safe HTTP client
+// that opts into the standard HTTP_PROXY, HTTPS_PROXY, and NO_PROXY settings.
+// It is intended for callers that explicitly need public egress through the
+// process environment, such as cloud APIs. Existing clients keep the direct
+// behavior of NewSSRFSafeHTTPClient unless they use this constructor.
+func NewSSRFSafeHTTPClientWithEnvironmentProxy(config SSRFSafeHTTPClientConfig) *http.Client {
+	return NewSSRFSafeHTTPClientWithTransport(
+		config,
+		NewSSRFSafeTransportWithEnvironmentProxy(config),
+	)
 }
 
 // SSRFSafeGRPCDialer is compatible with grpc.WithContextDialer and pins DNS

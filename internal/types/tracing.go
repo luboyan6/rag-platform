@@ -40,6 +40,11 @@ type TracingContext struct {
 	LangfuseUserID string `json:"lf_user_id,omitempty"`
 	// LangfuseSessionID preserves the sessionId for the same reason.
 	LangfuseSessionID string `json:"lf_session_id,omitempty"`
+	// LangfuseTraceName and LangfuseTags preserve the trace's stable grouping
+	// fields across an asynchronous boundary. They are low-cardinality
+	// operation metadata, not request content.
+	LangfuseTraceName string   `json:"lf_trace_name,omitempty"`
+	LangfuseTags      []string `json:"lf_tags,omitempty"`
 }
 
 // SetLangfuseTracing overwrites the embedded TracingContext. Method is

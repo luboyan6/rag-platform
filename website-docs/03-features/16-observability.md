@@ -27,7 +27,7 @@
 | 想知道… | 去哪里 |
 | --- | --- |
 | 某次请求全链路发生了什么 | 用响应头 `X-Request-ID` grep 应用日志；开启 `LLM_DEBUG_LOG` 后看 `llm_debug/<request_id>.log` |
-| 一次聊天/解析的 LLM 调用树与 token 消耗 | Langfuse UI（trace 名 `POST /api/v1/agent-chat` 或 `asynq.document:process`） |
+| 一次聊天/解析的 LLM 调用树与 token 消耗 | Langfuse UI（trace 名 `POST /api/v1/agent-chat` 或稳定的 `asynq.run`） |
 | 谁在什么时候改了什么 | 空间审计 `/tenants/:id/audit-log`；KB 活动 `/knowledge-bases/:id/activity`；平台审计 `/system/admin/audit-log` |
 | 为什么某文档一直失败 | `task_dead_letters` 表（scope=knowledge/knowledge_base）+ 运行时面板 archived 任务的 `last_error` |
 | 服务是否存活 | `GET /health`（200 `{"status":"ok"}`） |
@@ -106,7 +106,7 @@ return &lumberjack.Logger{
 
 #### 导出器（`exporter.go`） {#_3-2-导出器-exporter-go}
 
-OTLP/HTTP exporter，`Authorization: Basic base64(public:secret)`；`x-langfuse-ingestion-version: 4` 是 Langfuse v3/LiteFuse OTel 直写路径的必需门槛头（缺失会返回 400），`x-langfuse-sdk-name/version` 为兼容标记。`Manager`（`manager.go`）持有独立的 `TracerProvider`（`service.name=weknora` resource），不调用 `otel.SetTextMapPropagator` 等全局 OTel 变更，避免影响进程内其他 OTel 埋点；W3C `TraceContext` propagator 为包级私有值。
+OTLP/HTTP exporter，`Authorization: Basic base64(public:secret)`；`x-langfuse-ingestion-version: 4` 是 Langfuse v4 OTel 直写路径的必需门槛头（缺失会返回 400）。`Manager`（`manager.go`）持有独立的 `TracerProvider`（`service.name=weknora` resource），不调用 `otel.SetTextMapPropagator` 等全局 OTel 变更，避免影响进程内其他 OTel 埋点；W3C `TraceContext` propagator 为包级私有值。Trace-wide user/session/name/tags/metadata 通过进程内 OTel baggage processor 复制到每个 observation。
 
 #### 观测模型与埋点点位 {#_3-3-观测模型与埋点点位}
 
@@ -116,14 +116,14 @@ OTLP/HTTP exporter，`Authorization: Basic base64(public:secret)`；`x-langfuse-
 
 | 点位 | 源码 | 产出 |
 | --- | --- | --- |
-| HTTP 入口 | `middleware.go` `GinMiddleware` | 对 `shouldTrace` 白名单路径（knowledge-chat / agent-chat / knowledge-search / 各类 ingestion POST/PUT / FAQ 导入 / wiki auto-fix / evaluation / initialization 检测等）开根 Trace，名称为 `METHOD /path`，metadata 含 http.method/path/query/request_id，输出为 status 与 response.size；提取上游 W3C `traceparent` 头继承外部调用方 trace id |
-| asynq worker | `asynq.go` `AsynqMiddleware` | 从 payload 恢复 traceparent 续接 HTTP trace，否则新开 `asynq.<task_type>` trace；包一层 SPAN，metadata 含 task_id/queue/retry/max_retry/payload_bytes；payload 只预览前 1KB |
-| 入队侧注入 | `asynq.go` `InjectTracing` + `internal/types/tracing.go` `TracingContext` | 把 traceparent、user/session 标签以 `lf_*` JSON 字段嵌入任务 payload，跨进程传递 |
+| HTTP 入口 | `middleware.go` `GinMiddleware` | 对 `shouldTrace` 白名单路径（knowledge-chat / agent-chat / knowledge-search / 各类 ingestion POST/PUT / FAQ 导入 / wiki auto-fix / evaluation / initialization 检测等）开根 Trace，名称为 `METHOD /path`，metadata 含脱敏的 http.method/path/query/request_id，输出为 status 与 response.size；提取上游 W3C `traceparent` 头继承外部调用方 trace id。问答请求验证后会把用户 query 设置为根 observation input，完成时写入有界 answer output |
+| asynq worker | `asynq.go` `AsynqMiddleware` | 从 payload 恢复 traceparent 续接 HTTP trace，否则新开 `asynq.run` trace；包一层 `asynq.task` Chain observation，metadata 含 task_id/queue/retry/max_retry/payload_bytes；payload 只发送有界、脱敏的 JSON 摘要 |
+| 入队侧注入 | `asynq.go` `InjectTracing` + `internal/types/tracing.go` `TracingContext` | 把 traceparent、user/session/trace-name/tags 以 `lf_*` JSON 字段嵌入任务 payload，跨进程传递 |
 | 模型调用 | `internal/models/{chat,embedding,rerank,vlm,asr}/langfuse_wrapper.go` | 每次调用一个 Generation（模型名、输入、参数、输出、token usage、错误） |
 | 检索/重排摘要 | `retrieval_obs.go` | `SummarizeRetrieveOutput` / `SummarizeSearchResults` 等把召回结果压缩成 top-25 预览（rank/chunk_id/score/160 字符 preview），避免全文进 trace |
-| Agent 执行 | `internal/agent/engine.go`、`act.go` | agent.execute 等 SPAN，经 `logger.CloneContext` 保持与 HTTP 根 trace 同树 |
+| Agent 执行 | `internal/agent/engine.go`、`act.go` | `agent.execute` / `agent.round` / `agent.tool` 等 Agent、Chain、Tool observations，经 `logger.CloneContext` 保持与 HTTP 根 trace 同树 |
 
-上报内容（span 属性，`events.go`）：`langfuse.observation.type/input/output/metadata/model.name/model.parameters/usage_details/completion_start_time`、`langfuse.trace.name/input/output/metadata/tags`、`user.id`（显式 user 或 `tenant:<id>`）、`session.id`、`langfuse.environment/release`。
+上报内容（span 属性，`events.go`）：`langfuse.observation.type/input/output/metadata/model.name/model.parameters/usage_details/completion_start_time`、`langfuse.trace.name/input/output/metadata/tags`、`langfuse.user.id` / `user.id`（显式 user 或 `tenant:<id>`）、`langfuse.session.id` / `session.id`、`langfuse.environment/release`。根 observation 使用 `span` 类型；Agent、工具、检索、Chain 和 embedding 观察使用各自的 Langfuse v4 语义类型。
 
 ```mermaid
 flowchart LR
@@ -132,7 +132,7 @@ flowchart LR
     B --> D["Generation: embedding (检索)"]
     B --> E["Generation: rerank"]
     A --> F["InjectTracing -> asynq payload"]
-    F --> G["AsynqMiddleware<br/>Span: asynq.document:process"]
+    F --> G["AsynqMiddleware<br/>Chain: asynq.task"]
     G --> H["Generation: embedding / vlm / chat"]
 ```
 
@@ -238,7 +238,7 @@ flowchart TB
 
     subgraph ASYNC["异步任务路径 (asynq worker)"]
         INJ["InjectTracing<br/>(traceparent 写入 payload)"]
-        AMW["langfuse.AsynqMiddleware<br/>(续接 trace + SPAN)"]
+        AMW["langfuse.AsynqMiddleware<br/>(续接 trace + Chain)"]
         WH["任务 Handler"]
         INJ --> AMW --> WH
     end
