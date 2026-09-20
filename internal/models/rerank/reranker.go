@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/provider"
@@ -21,6 +25,52 @@ type Reranker interface {
 	// GetModelID returns the model ID
 	GetModelID() string
 }
+
+const (
+	rerankTimeoutEnv     = "WEKNORA_RERANK_TIMEOUT_SECONDS"
+	defaultRerankTimeout = 30 * time.Second
+)
+
+// configuredRerankTimeout returns the fallback timeout for a rerank request.
+// It is used only when the caller has not already supplied a context deadline.
+// The value is expressed in seconds to match the other model timeout settings.
+func configuredRerankTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(rerankTimeoutEnv))
+	if raw == "" {
+		return defaultRerankTimeout
+	}
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || seconds <= 0 || seconds > int64((time.Duration(1<<63-1))/time.Second) {
+		return defaultRerankTimeout
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// withRerankTimeout adds a fallback deadline only when the caller has not
+// already chosen one. A caller-provided deadline, including a longer one,
+// remains the authoritative timeout policy.
+func withRerankTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+// fallbackTimeoutReranker applies the factory-wide fallback timeout to every
+// provider implementation without duplicating deadline handling in each one.
+type fallbackTimeoutReranker struct {
+	inner   Reranker
+	timeout time.Duration
+}
+
+func (r *fallbackTimeoutReranker) Rerank(ctx context.Context, query string, documents []string) ([]RankResult, error) {
+	timeoutCtx, cancel := withRerankTimeout(ctx, r.timeout)
+	defer cancel()
+	return r.inner.Rerank(timeoutCtx, query, documents)
+}
+
+func (r *fallbackTimeoutReranker) GetModelName() string { return r.inner.GetModelName() }
+func (r *fallbackTimeoutReranker) GetModelID() string   { return r.inner.GetModelID() }
 
 type RankResult struct {
 	Index          int          `json:"index"`
@@ -122,7 +172,13 @@ func NewReranker(config *RerankerConfig) (Reranker, error) {
 	if logger.LLMDebugEnabled() {
 		r = &debugReranker{inner: r}
 	}
-	return wrapRerankerLangfuse(r, nil)
+	r, err = wrapRerankerLangfuse(r, nil)
+	if err != nil {
+		return r, err
+	}
+	// Keep this outermost so debug and Langfuse wrappers observe the same
+	// fallback deadline as the provider implementation.
+	return &fallbackTimeoutReranker{inner: r, timeout: configuredRerankTimeout()}, nil
 }
 
 // customHeaderSetter 表示支持注入自定义 HTTP header 的 reranker 实现。

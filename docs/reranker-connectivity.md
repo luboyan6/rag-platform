@@ -1,8 +1,18 @@
-# Reranker 连通性诊断（2026-09-16）
+# Reranker 连通性诊断（2026-09-16，修复更新于 2026-09-18）
+
+## 修复状态（2026-09-18）
+
+已完成以下生产修复并通过项目真实调用链验证：
+
+- `internal/models/rerank/transport.go` 现使用保留 SSRF 校验、拨号保护和重定向校验的环境代理 transport，因此会遵循 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。
+- `NewReranker` 现为所有 provider 统一提供 30 秒兜底 deadline；调用方已有 deadline 时保持原样。可通过 `WEKNORA_RERANK_TIMEOUT_SECONDS` 配置正整数秒数。
+- 智谱 rerank 的 `base_url` 仍必须是完整的 `/api/paas/v4/rerank`。YAML 只在应用启动时同步，已被运行时配置接管的同 ID 数据库记录不会被 YAML 覆盖。
+
+下文保留 9 月 16 日的原始诊断证据，用于说明修复原因；其中“缺少环境代理”和“没有兜底超时”的描述是修复前状态。
 
 ## 实测结论
 
-当前开发环境中，`builtin-rerank` 的问题是网络路径与接口地址不匹配，客户端缺少总超时又放大了等待。使用环境代理及完整 endpoint 后，同一配置中的模型与凭证可以正常返回排序结果。小样本测试没有显示模型推理需要十几分钟。
+2026-09-16 的开发环境中，`builtin-rerank` 的问题是网络路径与接口地址不匹配，客户端缺少总超时又放大了等待。使用环境代理及完整 endpoint 后，同一配置中的模型与凭证可以正常返回排序结果。小样本测试没有显示模型推理需要十几分钟。
 
 测试通过项目 `ConfigFromModel → NewReranker → ZhipuReranker.Rerank` 调用。配置来源为本地 `config/builtin_models.yaml`，凭证变量与现有 SSRF 白名单来自 `.env`；没有读取数据库覆盖值，也没有修改配置或生产代码。
 
@@ -18,10 +28,10 @@
 
 原有路径解析到 `28.0.1.70:443` 并成功建立 TCP 连接，随后停在 TLS 阶段，未记录请求写入或首字节。因此当前复现不是 DNS 不通、TCP 拒绝连接，也没有证据表明已进入模型推理。代理或虚拟 DNS 的具体实现未进一步核实；无需据此猜测上游服务算力不足。
 
-## 代码证据
+## 修复前的代码证据
 
 - `internal/models/rerank/transport.go` 使用 `NewSSRFSafeTransport`；`internal/utils/security.go` 中该 transport 没有 `Proxy` 函数。显式启用环境代理的另一构造器才设置 `http.ProxyFromEnvironment`。
-- `internal/models/rerank/zhipu_reranker.go` 的默认 URL 是 `https://open.bigmodel.cn/api/paas/v4/rerank`，但配置了 BaseURL 后原样使用，不追加路径。当前 YAML 的 `builtin-rerank` 只有 `/api/paas/v4`。代理对照的 404 与此吻合。
+- `internal/models/rerank/zhipu_reranker.go` 的默认 URL 是 `https://open.bigmodel.cn/api/paas/v4/rerank`，但配置了 BaseURL 后原样使用，不追加路径。当时 YAML 的 `builtin-rerank` 只有 `/api/paas/v4`。代理对照的 404 与此吻合。
 - 智谱与通用 reranker 均使用 `newRerankHTTPClient(0)`，即没有 HTTP 客户端总超时。`internal/application/service/chat_pipeline/rerank.go` 的调用也没有设置重排专属 deadline；上层传入的 context 若没有较短 deadline，就可能长时间等待。
 - 通用/OpenAI-compatible 适配器与智谱的 URL 语义不同：前者会追加 `/rerank`，不能把智谱的完整 endpoint 规则不加区分地应用于所有 provider。
 
@@ -64,8 +74,8 @@ env WEKNORA_RERANK_LIVE=1 \
 
 可选参数：`WEKNORA_RERANK_CONFIG` 指定 YAML 路径，`WEKNORA_RERANK_MODEL_ID` 选择其中的 rerank ID（默认 `builtin-rerank`）。支持 zhipu、generic、gpustack、openai；仅智谱自动增加完整 endpoint 对照项，其他 provider 使用其适配器现有规则。不会写回文件。`.env` 只提供安全策略及 YAML 的 `${NAME}` 插值后备值，已有进程环境优先；不会自动加载 `.env.local` 或启动其他应用功能。工厂校验耗时独立记录，30 秒 deadline 覆盖模型调用；`go test -timeout` 是整个测试进程的最终上限。
 
-## 验证与后续建议
+## 修复前的验证与后续建议
 
 离线测试覆盖：智谱不补路径、完整智谱地址、通用 provider 追加路径，以及两个 provider 在等待响应头/响应体时的 deadline 退出。整个 rerank 包回归及 `-race` 检查均已通过，真实测试默认跳过。
 
-建议后续修复分别处理三个位置：核对实际数据库配置并将智谱 reranker 设为完整 endpoint；让 reranker 按部署需求支持环境代理；增加有限的重排调用超时与失败降级策略。业务修复、服务重启及端到端知识库问答复测不在本次诊断测试的修改范围内。
+后续仍需在目标部署中核对实际数据库配置并重启后端，使运行时记录和代理环境生效；业务修复、服务重启及端到端知识库问答复测不属于 9 月 16 日原始诊断测试的修改范围。

@@ -96,12 +96,12 @@
     </div>
 
     <!-- Logo - Top Left -->
-    <a href="https://github.com/Tencent/WeKnora" target="_blank" class="header-logo" :title="$t('common.github')">
-      <img src="@/assets/img/weknora.png" alt="WeKnora" class="logo-image" />
-    </a>
+    <div class="header-logo">
+      <img src="@/assets/img/weknora.png" alt="DXZL" class="logo-image" />
+    </div>
 
-    <!-- Header Links - Top Right -->
-    <div class="header-links">
+    <!-- Header Links - Top Right (Hidden: official website, github, language selection) -->
+    <div class="header-links" style="display: none;">
       <a href="https://weknora.weixin.qq.com" target="_blank" class="header-link" :title="$t('common.website')">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
           stroke-linecap="round">

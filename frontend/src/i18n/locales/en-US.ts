@@ -224,12 +224,12 @@ export default {
     reopen: 'Product tour',
     steps: {
       welcome: {
-        title: 'Welcome to WeKnora',
+        title: 'Welcome to DXZL',
         desc: 'A few quick steps to get you familiar with knowledge bases, chat and agents. Click "Next" to begin.'
       },
       knowledge: {
         title: 'Create your knowledge base',
-        desc: 'Everything starts here: upload documents, web pages or FAQs and WeKnora parses and indexes them automatically. Click here to open knowledge bases.'
+        desc: 'Everything starts here: upload documents, web pages or FAQs and DXZL parses and indexes them automatically. Click here to open knowledge bases.'
       },
       chat: {
         title: 'Start an AI chat',
@@ -1283,12 +1283,12 @@ export default {
       backendDescriptions: {
         cube: 'Self-hosted MicroVM cluster for private or on-premises deployments',
         e2b: 'Managed MicroVM service or an E2B-compatible deployment',
-        docker: 'Keep a long-lived container per session on this WeKnora host; scripts and files stay in that container',
+        docker: 'Keep a long-lived container per session on this DXZL host; scripts and files stay in that container',
       },
       dockerDisabledAlert: 'Docker sandbox is not enabled on this deployment',
       dockerDisabledHint: 'A local docker.sock is equivalent to root on the host. For a single-machine private install, a system admin can enable it under Settings → System settings → Network security.',
       dockerDisabledCard: 'Docker sandbox is disabled on this deployment; this config will not create containers',
-      dockerHostRisk: 'Empty or unix:// uses the Docker daemon on the WeKnora host, which is equivalent to root on that machine. Use this only for a private single-node install. Prefer Cube or E2B when multiple workspaces share a host. Remote tcp:// endpoints require a TLS certificate directory.',
+      dockerHostRisk: 'Empty or unix:// uses the Docker daemon on the DXZL host, which is equivalent to root on that machine. Use this only for a private single-node install. Prefer Cube or E2B when multiple workspaces share a host. Remote tcp:// endpoints require a TLS certificate directory.',
       addConfig: 'Add sandbox',
       viewClusterGuide: 'Cluster setup guide',
       configName: 'Config name',
@@ -1381,11 +1381,11 @@ export default {
       policySaveFailed: 'Failed to update sandbox execution policy',
       legacyConfig: 'Deprecated',
       namedBackendHint: 'Workspace configuration is the only runtime source. Agents without one cannot execute skill scripts.',
-      weknoraTemplateTitle: 'WeKnora standard template',
-      weknoraDockerImage: 'WeKnora standard image',
+      weknoraTemplateTitle: 'DXZL standard template',
+      weknoraDockerImage: 'DXZL standard image',
       weknoraDockerImageHint: 'Each session gets its own long-lived container. Scripts, shell commands and files all share it until the session ends or the idle timeout reclaims it.',
-      weknoraTemplateOverview: 'WeKnora provides the standard runtime. Templates are discovered after connecting and the standard one is created when missing.',
-      weknoraTemplateDescription: 'Includes the Python, Node.js, CLI tools, workspace path, and non-root execution user expected by WeKnora skills.',
+      weknoraTemplateOverview: 'DXZL provides the standard runtime. Templates are discovered after connecting and the standard one is created when missing.',
+      weknoraTemplateDescription: 'Includes the Python, Node.js, CLI tools, workspace path, and non-root execution user expected by DXZL skills.',
       recommendedTag: 'Recommended',
       cardTemplateConfigured: 'Template configured',
       cardCredentialMissing: 'API key missing',
@@ -1400,9 +1400,9 @@ export default {
       refreshTemplates: 'Refresh templates',
       templateSelectHelp: 'Templates are loaded from this cluster. The saved configuration stores the ID automatically.',
       templateSelectPlaceholder: 'Connect to the cluster to load templates',
-      templateLoadHint: 'Enter the cluster connection and refresh. Missing WeKnora CLI templates are built from the official Hub image. Desktop templates are larger; create them from the row below. After changing DNS or the image, rebuild from that card.',
+      templateLoadHint: 'Enter the cluster connection and refresh. Missing DXZL CLI templates are built from the official Hub image. Desktop templates are larger; create them from the row below. After changing DNS or the image, rebuild from that card.',
       templateLoadFailed: 'Failed to load templates',
-      standardTemplateProvisioning: 'The WeKnora standard template is being created. Refresh shortly to see its status.',
+      standardTemplateProvisioning: 'The DXZL standard template is being created. Refresh shortly to see its status.',
       standardTemplateReplaced: 'The previous standard template was deleted and a rebuild has started. Wait until it is ready.',
       templateNotReady: 'The selected template is not ready. Refresh and wait for the build to finish.',
       connectionPassed: 'Connection verified. Templates below are loaded from this cluster.',
@@ -1410,21 +1410,21 @@ export default {
       templateStepHint: 'This step lists cluster templates and builds the official CLI image if it is missing. Desktop (XFCE) templates are heavier and are created only when you click Create. After changing DNS or the image, rebuild that card. You can continue after a template is ready.',
       loadingTemplates: 'Loading templates from the cluster...',
       templateBuildingHint: 'This template is being built. The list will refresh.',
-      templateUntaggedHint: 'The builds finished but none carries the default tag, so sandbox creation cannot resolve this template. Delete it in E2B and refresh; WeKnora will rebuild it.',
+      templateUntaggedHint: 'The builds finished but none carries the default tag, so sandbox creation cannot resolve this template. Delete it in E2B and refresh; DXZL will rebuild it.',
       templateFailedReason: 'Build failed: {reason}',
       noTemplates: 'No templates were returned by this cluster.',
-      weknoraStandardTemplate: 'WeKnora standard template',
+      weknoraStandardTemplate: 'DXZL standard template',
       createStandardTemplate: 'Create',
       createStandardTemplateHint: 'Built with the current connection settings, including DNS. After changing those settings, rebuild from the card.',
-      weknoraDesktopTemplate: 'WeKnora desktop template',
+      weknoraDesktopTemplate: 'DXZL desktop template',
       createDesktopTemplate: 'Create',
       createDesktopTemplateHint: 'Builds an XFCE graphical desktop from the official desktop image. It is much larger than the CLI template; create it only when you need a GUI.',
       replaceStandardTemplate: 'Rebuild',
-      replaceStandardTemplateConfirm: 'Rebuild the WeKnora standard template with the current settings, including DNS. The previous spawnable template is not deleted until the replacement is ready.',
-      desktopTemplateProvisioning: 'The WeKnora desktop template is being created. Refresh shortly to see its status.',
+      replaceStandardTemplateConfirm: 'Rebuild the DXZL standard template with the current settings, including DNS. The previous spawnable template is not deleted until the replacement is ready.',
+      desktopTemplateProvisioning: 'The DXZL desktop template is being created. Refresh shortly to see its status.',
       desktopTemplateReplaced: 'The previous desktop template was deleted and a rebuild has started. Wait until it is ready. The CLI template is left untouched.',
       desktopTemplateTag: 'Desktop',
-      replaceDesktopTemplateConfirm: 'Rebuild the WeKnora desktop template with the current settings, including DNS. The previous spawnable desktop template is not deleted until the replacement is ready. The CLI template is left untouched.',
+      replaceDesktopTemplateConfirm: 'Rebuild the DXZL desktop template with the current settings, including DNS. The previous spawnable desktop template is not deleted until the replacement is ready. The CLI template is left untouched.',
       templateLockedBySkills: 'This sandbox already has skills. The skill environment is bound to the current snapshot, so the runtime template cannot be changed or rebuilt. Create a new sandbox and install skills from the new template.',
       templateLockedByInFlight: 'A skill is still installing or being removed. The runtime template cannot be changed or rebuilt until that finishes.',
       templateUnnamed: 'Unnamed template',
@@ -1454,7 +1454,7 @@ export default {
       cubeApiKeyOptional: 'Optional — leave empty for an unauthenticated self-hosted CubeSandbox',
       cubeApiKeyWhere: 'How to enable auth on a self-hosted cluster',
       cubeDnsServers: 'DNS servers',
-      cubeDnsServersHelp: 'Optional. Nameserver IPs written into the WeKnora standard template. Leave empty to use the cluster default (commonly 119.29.29.29). If UDP/53 to public resolvers is blocked, use reachable addresses from the Cube host\'s /etc/resolv.conf, excluding 10/8, 172.16/12, and 192.168/16. Existing standard templates take effect only after Rebuild on the template card.',
+      cubeDnsServersHelp: 'Optional. Nameserver IPs written into the DXZL standard template. Leave empty to use the cluster default (commonly 119.29.29.29). If UDP/53 to public resolvers is blocked, use reachable addresses from the Cube host\'s /etc/resolv.conf, excluding 10/8, 172.16/12, and 192.168/16. Existing standard templates take effect only after Rebuild on the template card.',
       cubeDnsServersPlaceholder: 'e.g. 8.8.8.8, press Enter to add',
       e2bApiKeyHelp: 'Create one on the API Keys page of the E2B dashboard; it usually starts with e2b_.',
       e2bApiKeyWhere: 'Get an API key from the E2B dashboard',
@@ -1484,9 +1484,9 @@ export default {
       dockerHost: 'Docker daemon endpoint',
       dockerHostHelp: 'Empty follows the local docker CLI (DOCKER_HOST or the current docker context), so you do not have to type /var/run/docker.sock. For a remote daemon use tcp://host:2376, fill in the TLS certificate directory, and turn on "allow private endpoints" for RFC1918 addresses.',
       dockerTlsCertPath: 'TLS certificate directory',
-      dockerTlsCertPathHelp: 'Directory on the WeKnora host holding ca.pem, cert.pem and key.pem. Required for a remote daemon; certificates are mounted by the deployment, never stored here.',
+      dockerTlsCertPathHelp: 'Directory on the DXZL host holding ca.pem, cert.pem and key.pem. Required for a remote daemon; certificates are mounted by the deployment, never stored here.',
       dockerIdleTtl: 'Idle reclaim (seconds)',
-      dockerIdleTtlHelp: 'The Docker daemon has no idle timeout of its own. A container that runs no command for this long is reclaimed by WeKnora and rebuilt when the session continues. Empty means 1800 seconds.',
+      dockerIdleTtlHelp: 'The Docker daemon has no idle timeout of its own. A container that runs no command for this long is reclaimed by DXZL and rebuilt when the session continues. Empty means 1800 seconds.',
       dockerCpuLimit: 'CPU cores',
       dockerCpuLimitHelp: 'CPU cores available to one sandbox; 0 uses the built-in default.',
       dockerMemoryLimit: 'Memory limit (MB)',
@@ -2181,7 +2181,7 @@ export default {
   },
   envVarSettings: {
     title: 'Sandbox secrets',
-    description: 'Personal keys for skills and sandboxes, not WeKnora system or deployment settings.',
+    description: 'Personal keys for skills and sandboxes, not DXZL system or deployment settings.',
     helpAria: 'About sandbox secrets',
     introPersonalTitle: 'Yours only',
     introPersonalBody: 'Injected into your own chats and runs. Other members cannot see them, and theirs will not replace yours.',
@@ -2403,11 +2403,11 @@ export default {
     haveAccount: 'Already have an account?',
     backToLogin: 'Back to Login',
     loginHint: 'Sign in to continue, or create an account below if this is your first time.',
-    firstTime: 'New to WeKnora?',
+    firstTime: 'New to DXZL?',
     registerSuccess: 'Registration successful. Please sign in',
     registerFailed: 'Registration failed',
     subtitle: 'RAG Q&A, ReAct Agent and Wiki — an LLM-powered enterprise knowledge framework',
-    registerSubtitle: 'Create your account and start using WeKnora',
+    registerSubtitle: 'Create your account and start using DXZL',
     emailPlaceholder: 'Enter email address',
     passwordPlaceholder: 'Enter password',
     confirmPasswordPlaceholder: 'Enter password again',
@@ -2690,7 +2690,7 @@ export default {
     goToAgentSettings: 'Go to agent settings'
   },
   createChat: {
-    title: 'Hi, I am WeKnora — your knowledge, within reach',
+    title: 'Hi, I am DXZL — your knowledge, within reach',
     newSessionTitle: 'New Session',
     messages: {
       createFailed: 'Failed to create session',
@@ -2799,7 +2799,7 @@ export default {
     welcomeMessageDesc: 'Shown in the embed chat before the visitor sends their first message; leave blank to hide',
     showSuggestedQuestions: 'Suggested questions',
     showSuggestedQuestionsDesc: 'Show starter prompts before the first visitor message, from agent config and linked knowledge bases',
-    originsHint: 'Enter the host websites allowed to embed this channel (A), not the WeKnora address (B). One full origin per line, e.g. https://shop.example.com; at least one required. Supports *.example.com.',
+    originsHint: 'Enter the host websites allowed to embed this channel (A), not the DXZL address (B). One full origin per line, e.g. https://shop.example.com; at least one required. Supports *.example.com.',
     originsRequired: 'At least one allowed origin is required',
     originsInvalid: 'Invalid origin: {origin}',
     originsWildcardProd: 'Wildcard origin \'*\' is not allowed in production',
@@ -2858,7 +2858,7 @@ export default {
     allowFileUploadDesc: 'When enabled, visitors can upload images and document attachments. Requires the bound agent to support image upload.',
     webhookUrl: 'Webhook URL',
     webhookUrlPlaceholder: 'https://your-server.example.com/weknora/embed-events',
-    webhookUrlDesc: 'Optional. WeKnora POSTs message_sent / message_received events to this HTTPS endpoint.',
+    webhookUrlDesc: 'Optional. DXZL POSTs message_sent / message_received events to this HTTPS endpoint.',
     webhookSecret: 'Webhook secret',
     webhookSecretPlaceholder: 'HMAC-SHA256 secret (X-WeKnora-Signature header)',
     webhookSecretKeep: 'Leave blank to keep the saved secret',
@@ -6752,7 +6752,7 @@ export default {
   },
   integrations: {
     cli: {
-      title: 'WeKnora CLI',
+      title: 'DXZL CLI',
       subtitle: 'Manage knowledge bases and documents, search content, and ask questions from your terminal. Connect scripts and AI tools through the CLI or MCP.',
       docs: 'CLI documentation',
       docsHint: 'Installation and complete command reference',
@@ -6978,14 +6978,14 @@ export default {
       directWarning: 'Direct user ID trusts the caller-supplied header. Use only for trusted server-to-server calls.',
       directWarningDetail: 'Anyone with the API key can change the user ID header to impersonate another external user and reuse or hijack that user\'s MCP OAuth authorization. Do not use this from browsers or untrusted clients; use Signed token for end-user apps.',
       signedRecommended: 'Recommended for user-facing apps: your backend signs a short-lived HS256 JWT for the external user.',
-      signedFlowDetail: 'Keep the HMAC secret only on WeKnora and your trusted backend—never put it in requests or ship it to browsers. The request header carries the JWT string signed with that secret (it changes on each issuance or after expiry), not the secret itself. JWT must include sub (external user ID), tenant_id, aud=weknora, and exp (max 24h lifetime).',
+      signedFlowDetail: 'Keep the HMAC secret only on DXZL and your trusted backend—never put it in requests or ship it to browsers. The request header carries the JWT string signed with that secret (it changes on each issuance or after expiry), not the secret itself. JWT must include sub (external user ID), tenant_id, aud=weknora, and exp (max 24h lifetime).',
       directHeader: 'User ID header',
       requireDirectHeader: 'Require user ID header',
       requireDirectHeaderDesc: 'When enabled, API Key requests without the user ID header are rejected; when disabled, all requests are treated as the whole workspace with no per-user distinction.',
       tokenHeader: 'Token header',
       tokenHeaderDesc: 'Clients send the backend-signed JWT in this fixed header.',
       hmacSecret: 'HMAC secret',
-      hmacSecretDesc: 'Same secret stored in WeKnora; used only on your backend to sign JWTs—never send it as a request header.',
+      hmacSecretDesc: 'Same secret stored in DXZL; used only on your backend to sign JWTs—never send it as a request header.',
       secretConfigured: 'Secret configured (not shown again); enter a new value to rotate',
       secretSavedCopyHint: 'Secret saved. Copy it to your backend now — you will not be able to view it again after leaving this page.',
       generateSecret: 'Generate secret',
@@ -7059,7 +7059,7 @@ export default {
     },
     chrome: {
       title: 'Knowledge Assistant',
-      subtitle: 'For self-hosted WeKnora: ask questions in a sidebar, clip web pages, and save Markdown notes into your knowledge bases while you browse.',
+      subtitle: 'For self-hosted DXZL: ask questions in a sidebar, clip web pages, and save Markdown notes into your knowledge bases while you browse.',
       capabilitiesTitle: 'Core capabilities',
       capabilities: {
         qa: {
@@ -7093,7 +7093,7 @@ export default {
         },
         port: {
           title: 'Desktop: fixed port (recommended)',
-          desc: 'On WeKnora Desktop, set a fixed API port (e.g. 37841) in API Info so the URL stays stable across restarts.'
+          desc: 'On DXZL Desktop, set a fixed API port (e.g. 37841) in API Info so the URL stays stable across restarts.'
         },
         install: {
           title: 'Install the extension',
@@ -7112,8 +7112,8 @@ export default {
       storeMeta: 'Chrome Web Store · v1.0.0'
     },
     claw: {
-      title: 'WeKnora Skill',
-      subtitle: 'Import documents and run hybrid retrieval (vector + keyword) via the WeKnora REST API—for uploads, URL imports, Markdown entries, and cross-KB search.',
+      title: 'DXZL Skill',
+      subtitle: 'Import documents and run hybrid retrieval (vector + keyword) via the DXZL REST API—for uploads, URL imports, Markdown entries, and cross-KB search.',
       capabilitiesTitle: 'Skill capabilities',
       capabilities: {
         upload: {
@@ -7162,7 +7162,7 @@ export default {
       copyCmdSuccess: 'Install command copied',
       ecosystemNote: 'Skill hosted on ClawHub ({\'@\'}lyingbug/weknora). See the ClawHub page for full API docs and version history.',
       installCta: 'Open ClawHub',
-      installCtaHint: 'Install WeKnora Skill · opens in a new tab',
+      installCtaHint: 'Install DXZL Skill · opens in a new tab',
       hubMeta: 'ClawHub · {\'@\'}lyingbug/weknora · MIT-0'
     }
   },

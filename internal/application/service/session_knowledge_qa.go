@@ -207,6 +207,8 @@ func (s *sessionService) KnowledgeQA(
 			Add(types.MEMORY_RECALL).
 			Add(types.QUERY_UNDERSTAND).
 			Add(types.CHUNK_SEARCH_PARALLEL).
+			// CHUNK_RERANK was temporarily disabled until a stable reranker was available.
+			// It is restored now.
 			Add(types.CHUNK_RERANK).
 			AddIf(webSearchEnabled, types.WEB_FETCH).
 			Add(types.CHUNK_MERGE).
@@ -899,7 +901,7 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	// Use specific event list, only including retrieval-related events, not LLM summarization
 	searchEvents := []types.EventType{
 		types.CHUNK_SEARCH, // Vector search
-		// types.CHUNK_RERANK, // Temporarily disabled until a stable reranker is available.
+		types.CHUNK_RERANK, // Restored after the prior temporary disablement.
 		types.CHUNK_MERGE,  // Merge search results
 		types.FILTER_TOP_K, // Filter top K results
 	}
