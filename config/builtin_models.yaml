@@ -1,0 +1,118 @@
+builtin_models:
+
+  # ============================================================
+  # LLM
+  # ============================================================
+
+  - id: builtin-qwen38-chat
+    name: qwen3.8-27b
+    type: KnowledgeQA
+    source: remote
+    description: 千问默认对话模型
+    is_default: false
+    parameters:
+      base_url: http://112.250.106.137:10000/v1
+      api_key: ${GPUSTACK_API_KEY}
+      provider: gpustack
+      context_window: 131072
+      supports_vision: true
+
+  # 专用视觉模型
+  - id: builtin-qwen38-vlm
+    name: qwen3.8-27b
+    type: VLLM
+    source: remote
+    description: 千问视觉语言模型
+    is_default: false
+    parameters:
+      base_url: http://112.250.106.137:10000/v1
+      api_key: ${GPUSTACK_API_KEY}
+      provider: gpustack
+      context_window: 131072
+      supports_vision: true
+
+
+  - id: builtin-glm52-chat
+    name: glm-5.3-flash
+    type: KnowledgeQA
+    source: remote
+    description: 智谱默认对话模型
+    is_default: false
+    parameters:
+      base_url: https://open.bigmodel.cn/api/paas/v4
+      api_key: ${GLM_API_KEY}
+      provider: zhipu
+      context_window: 262144
+
+  # ============================================================
+  # Multimodal Embedding
+  # ============================================================
+
+  - id: builtin-qwen3-vl-embeddings
+    name: qwen3-vl-embedding-8b
+    type: Embedding
+    source: remote
+    parameters:
+      base_url: http://112.250.106.137:10000/v1
+      api_key: ${GPUSTACK_API_KEY}
+      provider: gpustack
+      embedding_parameters:
+        dimension: 4096
+        truncate_prompt_tokens: 8192
+
+
+  # ============================================================
+  # Multimodal Reranker
+  # ============================================================
+
+  - id: builtin-qwen3-vl-reranker
+    name: qwen3-vl-reranker-8b
+    type: Rerank
+    source: remote
+    parameters:
+      base_url: http://112.250.106.137:10000/v1
+      api_key: ${GPUSTACK_API_KEY}
+      provider: gpustack
+
+
+  # ============================================================
+  # Text Embedding
+  # ============================================================
+
+  - id: builtin-qwen3-embeddings
+    name: qwen3-embedding-8b
+    type: Embedding
+    source: remote
+    parameters:
+      base_url: http://112.250.106.137:10000/v1
+      api_key: ${GPUSTACK_API_KEY}
+      provider: gpustack
+      embedding_parameters:
+        dimension: 4096
+        truncate_prompt_tokens: 8192
+
+  # ============================================================
+  # Text Reranker
+  # ============================================================
+
+  - id: builtin-qwen3-reranker-local
+    name: qwen3-reranker-8b
+    type: Rerank
+    source: remote
+    parameters:
+      base_url: http://112.250.106.137:10000/v1
+      api_key: ${GPUSTACK_API_KEY}
+      provider: gpustack
+
+  - id: builtin-rerank
+    name: rerank
+    type: Rerank
+    source: remote
+    parameters:
+      base_url: https://open.bigmodel.cn/api/paas/v4/rerank
+      api_key: ${GLM_API_KEY}
+      provider: zhipu
+
+
+  
+
