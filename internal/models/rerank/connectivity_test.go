@@ -32,7 +32,7 @@ func TestRerankerEndpointContract(t *testing.T) {
 		name, provider, basePath, wantPath string
 		wantError                          bool
 	}{
-		{"zhipu_root_is_not_completed", "zhipu", "/api/paas/v4", "/api/paas/v4", true},
+		{"zhipu_root_appends_rerank", "zhipu", "/api/paas/v4", "/api/paas/v4/rerank", false},
 		{"zhipu_complete_endpoint", "zhipu", "/api/paas/v4/rerank", "/api/paas/v4/rerank", false},
 		{"generic_appends_rerank", "generic", "/v1", "/v1/rerank", false},
 	} {
