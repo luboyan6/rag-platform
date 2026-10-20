@@ -5,8 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/models/imageprep"
 )
 
 type deadlineCapturingReranker struct {
@@ -21,6 +24,80 @@ func (r *deadlineCapturingReranker) Rerank(ctx context.Context, _ string, _ []st
 
 func (r *deadlineCapturingReranker) GetModelName() string { return "test-reranker" }
 func (r *deadlineCapturingReranker) GetModelID() string   { return "test-model" }
+
+type deadlineCapturingImageReranker struct {
+	deadlineCapturingReranker
+	limits imageprep.Limits
+	call   func(context.Context) ([]RankResult, error)
+}
+
+func (r *deadlineCapturingImageReranker) AcceptsImages() bool           { return true }
+func (r *deadlineCapturingImageReranker) ImageLimits() imageprep.Limits { return r.limits }
+func (r *deadlineCapturingImageReranker) RerankImages(ctx context.Context, _ string, _ []Image) ([]RankResult, error) {
+	r.deadline, r.hasDeadline = ctx.Deadline()
+	if r.call != nil {
+		return r.call(ctx)
+	}
+	return nil, nil
+}
+
+func TestFallbackTimeoutRerankerDelegatesImageCapabilities(t *testing.T) {
+	limits := imageprep.Limits{MaxBytes: 1024, MIMETypes: []string{"image/png"}}
+	reranker := &fallbackTimeoutReranker{inner: &deadlineCapturingImageReranker{limits: limits}}
+	ir, ok := AsImageReranker(reranker)
+	if !ok {
+		t.Fatal("wrapped image reranker lost image support")
+	}
+	if got := ir.ImageLimits(); !reflect.DeepEqual(got, limits) {
+		t.Fatalf("image limits = %v, want %v", got, limits)
+	}
+}
+
+func TestFallbackTimeoutRerankerImagesRespectsCallerDeadline(t *testing.T) {
+	for _, timeout := range []time.Duration{time.Second, time.Minute} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			inner := &deadlineCapturingImageReranker{}
+			reranker := &fallbackTimeoutReranker{inner: inner, timeout: 10 * time.Second}
+			parent, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+
+			if _, err := reranker.RerankImages(parent, "query", nil); err != nil {
+				t.Fatal(err)
+			}
+			want, _ := parent.Deadline()
+			if !inner.hasDeadline || !inner.deadline.Equal(want) {
+				t.Fatalf("image deadline = %v (set=%v), want caller deadline %v", inner.deadline, inner.hasDeadline, want)
+			}
+		})
+	}
+}
+
+func TestFallbackTimeoutRerankerImagesCancelsWithoutCallerDeadline(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	inner := &deadlineCapturingImageReranker{call: func(ctx context.Context) ([]RankResult, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return nil, nil
+		}
+	}}
+	reranker := &fallbackTimeoutReranker{inner: inner, timeout: 10 * time.Millisecond}
+	done := make(chan error, 1)
+	go func() {
+		_, err := reranker.RerankImages(context.Background(), "query", nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("image rerank error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("image rerank did not terminate at its fallback deadline")
+	}
+}
 
 func TestConfiguredRerankTimeout(t *testing.T) {
 	t.Run("uses default for an unset value", func(t *testing.T) {
